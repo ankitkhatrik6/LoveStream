@@ -1,0 +1,24 @@
+{
+  "name": "ytmovieroom",
+  "version": "1.0.0",
+  "description": "A romantic watch party website for two people to watch YouTube videos together in real time with live chat",
+  "main": "server.js",
+  "scripts": {
+    "build": "node build.js",
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "watch-party",
+    "youtube",
+    "real-time",
+    "socket.io",
+    "chat"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.5.4"
+  }
+}

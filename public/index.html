@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LoveStream - Watch Together 💕</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Floating hearts background animation -->
+  <div class="hearts-container">
+    <div class="heart"></div>
+    <div class="heart"></div>
+    <div class="heart"></div>
+    <div class="heart"></div>
+    <div class="heart"></div>
+  </div>
+
+  <!-- Join Screen (Initial) -->
+  <div id="joinScreen" class="screen active">
+    <div class="container">
+      <div class="welcome-card">
+        <div class="welcome-icon">🎬</div>
+        <h1>LoveStream</h1>
+        <p class="subtitle">A premium couple movie night — watch, chat, and stay perfectly in sync</p>
+
+        <!-- Form Container -->
+        <div class="form-container">
+          <!-- Create Room Tab -->
+          <div class="tab-buttons">
+            <button class="tab-btn active" data-tab="create">Create Room</button>
+            <button class="tab-btn" data-tab="join">Join Room</button>
+          </div>
+
+          <!-- Create Room Form -->
+          <div id="createTab" class="tab-content active">
+            <div class="form-group">
+              <label for="createUsername">Your Name</label>
+              <input type="text" id="createUsername" placeholder="Enter your name" class="input-field" maxlength="20">
+            </div>
+            <button id="createRoomBtn" class="btn btn-primary">Create Room</button>
+          </div>
+
+          <!-- Join Room Form -->
+          <div id="joinTab" class="tab-content">
+            <div class="form-group">
+              <label for="joinUsername">Your Name</label>
+              <input type="text" id="joinUsername" placeholder="Enter your name" class="input-field" maxlength="20">
+            </div>
+            <div class="form-group">
+              <label for="roomCode">Room Code</label>
+              <input type="text" id="roomCode" placeholder="e.g. ABCD" class="input-field" maxlength="4" style="text-transform: uppercase;">
+            </div>
+            <button id="joinRoomBtn" class="btn btn-primary">Join Room</button>
+          </div>
+        </div>
+
+        <!-- Connection Status -->
+        <div id="connectionStatus" class="connection-status">
+          <span class="status-indicator"></span>
+          <span>Connecting...</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Watch Party Screen -->
+  <div id="watchScreen" class="screen">
+    <div class="container-fluid">
+      <!-- Header -->
+      <header class="header">
+        <div class="header-left">
+          <div class="header-brand">
+            <h2>💖 LoveStream</h2>
+            <span class="header-tagline">Premium couple movie night</span>
+          </div>
+          <span id="roomCodeDisplay" class="room-code">Room: XXXX</span>
+          <span id="hostBadge" class="host-badge hidden">Host</span>
+        </div>
+        <div class="header-right">
+          <button id="copyLinkBtn" class="btn btn-small btn-secondary" title="Copy room link">📋 Copy Link</button>
+          <button id="leaveRoomBtn" class="btn btn-small btn-secondary" title="Leave room">🚪 Leave</button>
+          <div class="user-count">
+            <span class="user-indicator"></span>
+            <span id="userCount">1</span> <span id="onlineText">online</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Main Content -->
+      <div class="content-wrapper">
+        <!-- Video Section (Left/Top) -->
+        <div class="video-section">
+          <!-- Video Input -->
+          <div class="video-input-area">
+            <input type="text" id="youtubeUrl" placeholder="Paste YouTube link to watch together..." class="input-field">
+            <button id="loadVideoBtn" class="btn btn-primary">Load Video</button>
+          </div>
+
+          <!-- YouTube Player -->
+          <div class="video-container">
+            <div id="youtubePlayer" class="youtube-player"></div>
+            <div class="loading-spinner" id="loadingSpinner">
+              <div class="spinner"></div>
+              <p>Loading video...</p>
+            </div>
+          </div>
+
+          <!-- Video Info -->
+          <div class="video-info">
+            <span id="videoStatus">No video loaded</span>
+          </div>
+        </div>
+
+        <!-- Chat Section (Right/Bottom) -->
+        <div class="chat-section">
+          <div class="chat-header">
+            <h3>💬 Chat</h3>
+          </div>
+
+          <!-- Chat Messages -->
+          <div id="chatMessages" class="chat-messages">
+            <div class="system-message">Connected! Say hi to your movie partner 💕</div>
+          </div>
+
+          <!-- Chat Input -->
+          <div class="chat-input-area">
+            <input type="text" id="chatInput" placeholder="Type a message..." class="input-field" autocomplete="off">
+            <button id="sendMessageBtn" class="btn btn-primary">Send</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notifications Area -->
+      <div id="notificationsArea" class="notifications-area"></div>
+    </div>
+  </div>
+
+  <!-- Error Modal -->
+  <div id="errorModal" class="modal">
+    <div class="modal-content">
+      <h3>Error</h3>
+      <p id="errorMessage"></p>
+      <button class="btn btn-primary" onclick="closeErrorModal()">Close</button>
+    </div>
+  </div>
+
+  <!-- Success Modal for Room Creation -->
+  <div id="roomCreatedModal" class="modal">
+    <div class="modal-content">
+      <h3>🎉 Room Created!</h3>
+      <p>Share this link with your friend:</p>
+      <div class="room-link-display">
+        <input type="text" id="roomLinkInput" readonly class="input-field">
+        <button class="btn btn-primary" id="copyRoomLinkBtn">Copy Link</button>
+      </div>
+      <p style="margin-top: 15px; font-size: 14px; color: #666;">
+        Room Code: <strong id="roomCodeModal">XXXX</strong>
+      </p>
+      <button class="btn btn-secondary" onclick="closeRoomCreatedModal()">Got it!</button>
+    </div>
+  </div>
+
+  <!-- Socket.IO Library -->
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+
+  <!-- Runtime deployment config -->
+  <script src="config.js"></script>
+
+  <!-- YouTube IFrame API with async loading -->
+  <script async src="https://www.youtube.com/iframe_api"></script>
+
+  <!-- Main Application Script -->
+  <script src="js/script.js"></script>
+</body>
+</html>
