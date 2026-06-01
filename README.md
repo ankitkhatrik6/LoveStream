@@ -1,3 +1,132 @@
+# LoveStream 🎬
+
+<p align="center">
+  <b>Watch YouTube together in real time — with synced controls and live chat.</b>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Node.js-18%2B-339933?style=for-the-badge&logo=node.js" alt="Node.js">
+  <img src="https://img.shields.io/badge/Socket.IO-Real--time-010101?style=for-the-badge&logo=socket.io" alt="Socket.IO">
+  <img src="https://img.shields.io/badge/Frontend-Vanilla%20JS-F7DF1E?style=for-the-badge&logo=javascript&logoColor=000" alt="Vanilla JS">
+  <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="MIT License">
+</p>
+
+## ✨ Overview
+
+LoveStream is a lightweight watch-party web app for two users.
+Create a room, share a link, load any YouTube video, and enjoy synchronized playback with chat.
+
+Built with:
+- **Backend:** Node.js, Express, Socket.IO
+- **Frontend:** HTML, CSS, Vanilla JavaScript, YouTube IFrame API
+
+## 🚀 Features
+
+- 🎥 Real-time sync for **play / pause / seek / video change**
+- 💬 Live room chat with timestamps
+- 🔗 Shareable room links and short room codes
+- 👥 Optimized for private 2-person rooms
+- 📱 Responsive UI for mobile, tablet, and desktop
+- 🛡️ Basic client-side XSS-safe message rendering
+
+## 📸 How it works
+
+1. Create a room
+2. Copy the generated room link
+3. Invite your friend
+4. Load YouTube video and watch together
+
+## 🛠️ Local Development
+
+### Prerequisites
+
+- Node.js 16+
+- npm
+
+### Install & Run
+
+```bash
+git clone https://github.com/ankitkhatrik6/LoveStream.git
+cd LoveStream
+npm install
+npm start
+```
+
+App runs by default at:
+- http://localhost:3000
+
+## ⚙️ Environment Variables
+
+Backend (`server.js`):
+
+- `PORT` (default: `3000`)
+- `NODE_ENV` (use `production` in prod)
+- `CLIENT_URL` (important in production; used for room link generation)
+
+Frontend runtime config:
+
+- `SOCKET_URL` (used by `build.js` to generate `public/config.js` / `dist/config.js`)
+
+## 🌐 Deployment (Vercel + Render)
+
+### 1) Deploy backend on Render
+
+- Service type: Web Service
+- Start command: `npm start`
+- Set env vars:
+  - `NODE_ENV=production`
+  - `CLIENT_URL=https://your-vercel-app.vercel.app` (set after frontend deploy)
+
+### 2) Deploy frontend on Vercel
+
+- Build command: `npm run build`
+- Output directory: `dist`
+- Set env var:
+  - `SOCKET_URL=https://your-render-service.onrender.com`
+
+### 3) Final wiring
+
+After Vercel URL is live, update Render `CLIENT_URL` with that URL and redeploy once.
+
+## 📁 Project Structure
+
+```text
+LoveStream/
+├── build.js
+├── package.json
+├── server.js
+├── vercel.json
+├── render.yaml
+└── public/
+    ├── index.html
+    ├── config.js
+    ├── css/
+    │   └── style.css
+    └── js/
+        └── script.js
+```
+
+## 🤝 Contributing
+
+Contributions, improvements, and bug reports are welcome.
+
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the **MIT License**.
+See the [LICENSE](LICENSE) file for full text.
+
+## 👨‍💻 Author
+
+**Ankit Khatri KC**
+
+---
+
+If you like this project, consider giving it a ⭐ on GitHub.
 # 🎬 YouTube Watch Party - Real-time Collaborative Viewing
 
 A beautiful, romantic watch party website where two people can watch YouTube videos together in real time with live chat. Built with Node.js, Express, Socket.IO, and vanilla JavaScript.
