@@ -105,7 +105,7 @@ io.on('connection', (socket) => {
       // Send room created confirmation to the creator (include host info)
       socket.emit('room-created', {
         roomCode: newRoomCode,
-        roomLink: `${getBaseUrl()}?room=${newRoomCode}`,
+        roomLink: `${getBaseUrl(socket)}?room=${newRoomCode}`,
         hostId: socket.id,
         hostUsername: username
       });
@@ -146,7 +146,7 @@ io.on('connection', (socket) => {
         // send join confirmation and state without broadcasting join event
         socket.emit('room-joined', {
           roomCode: roomCode,
-          roomLink: `${getBaseUrl()}?room=${roomCode}`,
+          roomLink: `${getBaseUrl(socket)}?room=${roomCode}`,
           users: room.users.map(u => ({ id: u.id, username: u.username })),
           hostId: room.host || null,
           hostUsername: room.hostUsername || null
@@ -163,7 +163,7 @@ io.on('connection', (socket) => {
       // If socket already recorded in room, just sync state back
       if (room.users.find(u => u.id === socket.id)) {
         socket.emit('sync-video-state', getSyncState(room));
-        socket.emit('room-created', { roomCode: roomCode, roomLink: `${getBaseUrl()}?room=${roomCode}` });
+        socket.emit('room-created', { roomCode: roomCode, roomLink: `${getBaseUrl(socket)}?room=${roomCode}` });
         socket.emit('chat-history', room.messages || []);
         return;
       }
@@ -186,7 +186,7 @@ io.on('connection', (socket) => {
       // Notify the joining socket that it has successfully joined
       socket.emit('room-joined', {
         roomCode: roomCode,
-        roomLink: `${getBaseUrl()}?room=${roomCode}`,
+        roomLink: `${getBaseUrl(socket)}?room=${roomCode}`,
         users: room.users.map(u => ({ id: u.id, username: u.username })),
         messages: room.messages || [],
         hostId: room.host || null,
@@ -478,10 +478,23 @@ function generateRoomCode() {
  * Works in both local and production environments
  * @returns {string} Base URL of the application
  */
-function getBaseUrl() {
+/**
+ * Get base URL for generating room links.
+ * Prefer explicit CLIENT_URL (set in Render/Vercel), then the socket origin,
+ * then fall back to local dev URL.
+ * @param {Socket} [socket] optional Socket.IO socket to read origin header
+ */
+function getBaseUrl(socket) {
   const clientUrl = process.env.CLIENT_URL || process.env.PUBLIC_URL;
-  if (clientUrl) {
-    return clientUrl.replace(/\/$/, '');
+  if (clientUrl) return clientUrl.replace(/\/$/, '');
+
+  // If we have a socket (client request), prefer the Origin header the browser sent
+  try {
+    if (socket && socket.handshake && socket.handshake.headers && socket.handshake.headers.origin) {
+      return socket.handshake.headers.origin.replace(/\/$/, '');
+    }
+  } catch (e) {
+    // ignore and fall back
   }
 
   const host = process.env.HOST || 'localhost';
