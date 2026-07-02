@@ -259,6 +259,12 @@ export default function App() {
   // Room stream state
   const [users, setUsers] = useState<User[]>([]);
   const [currentVideoId, setCurrentVideoId] = useState("");
+  // Ref always tracks the latest video ID — player closures read this, not stale state
+  const currentVideoIdRef = useRef("");
+  const _setCurrentVideoId = (id: string) => {
+    currentVideoIdRef.current = id;
+    setCurrentVideoId(id);
+  };
   const [selectedPresetId, setSelectedPresetId] = useState("");
   const [videoInput, setVideoInput] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
@@ -546,7 +552,7 @@ export default function App() {
             setRoomId(rId);
             roomIdRef.current = rId;
             setUsers(rUsers);
-            setCurrentVideoId(rVideoId);
+            _setCurrentVideoId(rVideoId);
             setChatHistory(rHistory || []);
             setIsPlaying(playbackState.playing);
             setInRoom(true);
@@ -617,9 +623,15 @@ export default function App() {
           case "video_changed": {
             const { videoId } = payload;
             console.log(`[Video] Video changed by partner: ${videoId}`);
-            setCurrentVideoId(videoId);
+            _setCurrentVideoId(videoId);
             setIsPlaying(false);
             setCurrentTime(0);
+            // Imperatively load the video right away if player is ready
+            if (playerRef.current && typeof playerRef.current.loadVideoById === "function") {
+              isUpdatingPlayerRef.current = true;
+              playerRef.current.loadVideoById({ videoId, startSeconds: 0 });
+              setTimeout(() => { isUpdatingPlayerRef.current = false; }, 1500);
+            }
             break;
           }
 
@@ -738,9 +750,15 @@ export default function App() {
     };
   }, []);
 
-  // Initialize YT Player API ONCE when entering the room
+  // Initialize YT Player API when we first get a video to play
+  // This runs whenever inRoom or currentVideoId changes, but only creates the player once.
+  const playerInitializedRef = useRef(false);
+
   useEffect(() => {
-    if (!inRoom) return;
+    // Only run inside a room and only when we actually have a video to load
+    if (!inRoom || !currentVideoId) return;
+    // Only initialize once — after that, loadVideoById handles video changes
+    if (playerInitializedRef.current) return;
 
     let destroyed = false;
     let safetyTimeout: any = null;
@@ -748,113 +766,96 @@ export default function App() {
     loadYouTubeAPI(() => {
       if (destroyed) return;
 
-      console.log(`[Player] Initializing YouTube player with initial ID: ${currentVideoId}`);
-      isUpdatingPlayerRef.current = true; // Guard initial loading events
+      // Mark as initialized immediately to prevent double-init
+      playerInitializedRef.current = true;
+
+      const videoIdToLoad = currentVideoIdRef.current || currentVideoId;
+      console.log(`[Player] Initializing YouTube player with video ID: ${videoIdToLoad}`);
+      isUpdatingPlayerRef.current = true;
       setIsPlayerReady(false);
 
-      // Safety fallback: if YT doesn't fire ready event in 4s, dismiss the connecting spinner
+      // Safety fallback: if YT doesn't fire ready event in 6s, unblock the UI
       safetyTimeout = setTimeout(() => {
         if (!destroyed) {
-          console.warn("[Player] YouTube Player did not fire onReady within timeout, applying safety fallback.");
+          console.warn("[Player] YouTube Player did not fire onReady within timeout.");
           setIsPlayerReady(true);
+          isUpdatingPlayerRef.current = false;
         }
-      }, 4000);
+      }, 6000);
 
-      // Destroy previous player instance if any exists to avoid duplicates
+      // Destroy any lingering player instance
       if (playerRef.current && playerRef.current.destroy) {
-        try {
-          playerRef.current.destroy();
-        } catch (e) {
-          console.warn("Could not destroy previous player instance", e);
-        }
+        try { playerRef.current.destroy(); } catch (e) { /* ignore */ }
         playerRef.current = null;
       }
 
       playerRef.current = new (window as any).YT.Player("love-player", {
         height: "100%",
         width: "100%",
-        videoId: currentVideoId || undefined,
+        videoId: videoIdToLoad,   // ALWAYS provide a real video ID at init time
         host: "https://www.youtube.com",
         playerVars: {
           origin: window.location.origin,
           enablejsapi: 1,
-          controls: 1,          // Keep controls enabled for maximum mobile gesture support and fallback
-          disablekb: 0,         // Allow standard interactions
-          fs: 1,                // Allow fullscreen
-          modestbranding: 1,    // Minimize YouTube branding
-          rel: 0,               // No related videos
-          playsinline: 1,       // CRITICAL: Inline play on iOS/Safari instead of full-screen takeoff
-          iv_load_policy: 3,    // Hide annotations
-          autoplay: 1,          // Enable autoplay
-          mute: 1               // Enable mute initially for autoplay permission
+          controls: 1,
+          disablekb: 0,
+          fs: 1,
+          modestbranding: 1,
+          rel: 0,
+          playsinline: 1,
+          iv_load_policy: 3,
+          autoplay: 0,   // We control play manually after ready
+          mute: 1,
         },
         events: {
           onReady: (event: any) => {
             if (safetyTimeout) clearTimeout(safetyTimeout);
             console.log("[Player] YouTube Player Ready");
             setIsPlayerReady(true);
+
             event.target.setVolume(volume);
-            if (isMuted || !hasInteractedRef.current) {
-              event.target.mute();
-            } else {
-              event.target.unMute();
+            // Start muted to satisfy browser autoplay policy; user can unmute
+            event.target.mute();
+
+            // Check if a newer video was queued while the player was initializing
+            const latestVideoId = currentVideoIdRef.current;
+            if (latestVideoId && latestVideoId !== videoIdToLoad) {
+              console.log(`[Player] onReady: a newer video was queued (${latestVideoId}), loading it now.`);
+              event.target.loadVideoById({ videoId: latestVideoId, startSeconds: 0 });
             }
+            // else: the videoId provided at init time is already loaded by the iframe
 
             setDuration(event.target.getDuration() || 0);
 
-            if (currentVideoId) {
-              if (isPlaying) {
-                event.target.playVideo();
-              } else {
-                event.target.pauseVideo();
-              }
-            }
-
-            // Release initial initialization guard after a brief timeout to let player settle
             setTimeout(() => {
-              if (!destroyed) {
-                isUpdatingPlayerRef.current = false;
-              }
+              if (!destroyed) isUpdatingPlayerRef.current = false;
             }, 1200);
           },
           onError: (event: any) => {
             if (safetyTimeout) clearTimeout(safetyTimeout);
             console.error("[Player] YouTube Player Error:", event.data);
             setIsPlayerReady(true);
+            isUpdatingPlayerRef.current = false;
           },
           onStateChange: (event: any) => {
             const playerState = event.data;
-            // 1 = PLAYING, 2 = PAUSED, 0 = ENDED, 3 = BUFFERING, 5 = CUED
             console.log(`[Player] YouTube State Changed: ${playerState}`);
 
-            // ALWAYS sync the React state immediately so the Play/Pause controls are 100% accurate
             if (playerState === 1 || playerState === 3) {
               setIsPlaying(true);
             } else if (playerState === 2 || playerState === 0 || playerState === 5 || playerState === -1) {
               setIsPlaying(false);
             }
 
-            if (isUpdatingPlayerRef.current) {
-              // Ignore sending sync messages during programmatic/remote sync operations
-              return;
-            }
+            if (isUpdatingPlayerRef.current) return;
+            if (!hasInteractedRef.current) return;
+            if (playerState === 3 || playerState === -1) return;
 
-            if (!hasInteractedRef.current) {
-              // Ignore until user has actively interacted
-              return;
-            }
-
-            if (playerState === 3 || playerState === -1) {
-              // Ignore intermediate buffering/unstarted states from triggering sync broadcasts
-              return;
-            }
-
-            // Otherwise, this is a manual user interaction directly inside the YouTube iframe player controls
-            if (playerState === 1) { // Manual Play inside YouTube Frame
+            if (playerState === 1) {
               sendPlayerSync(true, playerRef.current.getCurrentTime() || 0);
-            } else if (playerState === 2) { // Manual Pause inside YouTube Frame
+            } else if (playerState === 2) {
               sendPlayerSync(false, playerRef.current.getCurrentTime() || 0);
-            } else if (playerState === 0) { // Video Ended
+            } else if (playerState === 0) {
               sendPlayerSync(false, 0);
             }
           }
@@ -865,54 +866,23 @@ export default function App() {
     return () => {
       destroyed = true;
       if (safetyTimeout) clearTimeout(safetyTimeout);
-      setIsPlayerReady(false);
-      if (playerRef.current && playerRef.current.destroy) {
-        try {
-          playerRef.current.destroy();
-        } catch (e) {
-          console.warn("Could not destroy YouTube player on room exit", e);
-        }
-        playerRef.current = null;
-      }
     };
+  }, [inRoom, currentVideoId]);
+
+  // Cleanup player on room exit
+  useEffect(() => {
+    if (inRoom) return;
+    setIsPlayerReady(false);
+    playerInitializedRef.current = false;
+    if (playerRef.current && playerRef.current.destroy) {
+      try { playerRef.current.destroy(); } catch (e) { /* ignore */ }
+      playerRef.current = null;
+    }
   }, [inRoom]);
 
-  // Load new video dynamically when currentVideoId state changes
-  useEffect(() => {
-    if (inRoom && playerRef.current && currentVideoId) {
-      console.log(`[Player] Cueing new video ID: ${currentVideoId}`);
-      isUpdatingPlayerRef.current = true;
-
-      if (typeof playerRef.current.cueVideoById === "function") {
-        playerRef.current.cueVideoById({
-          videoId: currentVideoId,
-          startSeconds: 0
-        });
-      } else if (typeof playerRef.current.loadVideoById === "function") {
-        playerRef.current.loadVideoById({
-          videoId: currentVideoId,
-          startSeconds: 0
-        });
-        if (!hasInteractedRef.current && typeof playerRef.current.mute === "function") {
-          playerRef.current.mute();
-        }
-        if (typeof playerRef.current.pauseVideo === "function") {
-          playerRef.current.pauseVideo();
-        }
-      }
-
-      setIsPlaying(false);
-      setCurrentTime(0);
-
-      const updateLockTimer = setTimeout(() => {
-        isUpdatingPlayerRef.current = false;
-      }, 1500);
-
-      return () => {
-        clearTimeout(updateLockTimer);
-      };
-    }
-  }, [currentVideoId]);
+  // No separate video-change effect needed — video loading is now done
+  // imperatively in handleVideoChange and the video_changed WS handler,
+  // so the player always responds immediately without effect race conditions.
 
   // Track and update the custom slider position when video is playing
   useEffect(() => {
@@ -944,15 +914,29 @@ export default function App() {
 
   const handleVideoChange = (videoId: string) => {
     if (!videoId) return;
+
+    // Update state and ref
+    _setCurrentVideoId(videoId);
+    setIsPlaying(false);
+    setCurrentTime(0);
+
+    // Imperatively load video in player right now — no effect chain needed
+    if (playerRef.current && typeof playerRef.current.loadVideoById === "function") {
+      console.log(`[Player] handleVideoChange: loading ${videoId}`);
+      isUpdatingPlayerRef.current = true;
+      playerRef.current.loadVideoById({ videoId, startSeconds: 0 });
+      setTimeout(() => { isUpdatingPlayerRef.current = false; }, 1500);
+    } else {
+      console.warn("[Player] handleVideoChange: player not ready, video will load on player init");
+    }
+
+    // Broadcast the change to the partner
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({
         type: "change_video",
         payload: { videoId }
       }));
     }
-    setCurrentVideoId(videoId);
-    setIsPlaying(false);
-    setCurrentTime(0);
   };
 
   const handleUrlSubmit = (e: React.FormEvent) => {
@@ -1661,10 +1645,22 @@ export default function App() {
                       </button>
                     )}
 
-                    {!isPlayerReady && (
+                    {/* No video loaded yet — prompt the user */}
+                    {!currentVideoId && (
+                      <div className="absolute inset-0 bg-[#0f0f15] flex flex-col items-center justify-center gap-4 text-white">
+                        <div className="text-5xl">🎬</div>
+                        <div className="text-center">
+                          <p className="font-display font-black uppercase tracking-tight text-base sm:text-lg text-white">No Video Loaded</p>
+                          <p className="font-mono text-xs text-gray-400 mt-1">Paste a YouTube URL below and click <span className="text-[#FF2E63] font-bold">Change Video</span></p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Video is loading — show spinner */}
+                    {currentVideoId && !isPlayerReady && (
                       <div className="absolute inset-0 bg-[#0f0f15] flex flex-col items-center justify-center gap-3 text-white">
                         <div className="border-4 border-[#FF2E63] border-t-transparent rounded-full w-12 h-12 animate-spin"></div>
-                        <p className="font-mono text-xs tracking-wider">CONNECTING SYNC STREAM...</p>
+                        <p className="font-mono text-xs tracking-wider">LOADING VIDEO...</p>
                       </div>
                     )}
                   </div>
