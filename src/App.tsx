@@ -27,6 +27,11 @@ import {
 } from "lucide-react";
 import MockSyncShowcase from "./components/MockSyncShowcase";
 
+// Memoized container to prevent React from destroying the YouTube iframe during re-renders
+const YouTubePlayerPlaceholder = React.memo(() => {
+  return <div id="love-player" className="w-full h-full"></div>;
+});
+
 
 
 interface User {
@@ -1615,8 +1620,8 @@ export default function App() {
                 <section
                   ref={playerContainerRef}
                   className={`bg-black relative flex flex-col overflow-hidden transition-all duration-300 ${isFullscreen
-                      ? "w-full h-full p-2 sm:p-4 border-0 shadow-none rounded-none"
-                      : "border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] sm:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)]"
+                    ? "w-full h-full p-2 sm:p-4 border-0 shadow-none rounded-none"
+                    : "border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] sm:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)]"
                     }`}
                 >
                   {/* Embedded Status Overlay */}
@@ -1625,9 +1630,9 @@ export default function App() {
                     LIVE SYNCED • {formatTime(currentTime)} / {formatTime(duration)}
                   </div>
 
-                  {/* The actual Youtube Player placeholder */}
+                  {/* The actual Youtube Player placeholder (Memoized to prevent React destruction) */}
                   <div className={`w-full ${isFullscreen ? 'flex-1 min-h-0' : 'aspect-video'} bg-zinc-900 border-b-4 border-black relative`}>
-                    <div id="love-player" className="w-full h-full"></div>
+                    <YouTubePlayerPlaceholder />
 
                     {isAutoMuted && (
                       <button
@@ -1869,8 +1874,8 @@ export default function App() {
                               onTouchMove={() => handleTouchMove(msg.id)}
                             >
                               <p className={`p-3 text-xs font-semibold border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] select-none cursor-pointer ${isSelf
-                                  ? "bg-[#FF2E63] text-white border-black"
-                                  : "bg-white text-black border-black"
+                                ? "bg-[#FF2E63] text-white border-black"
+                                : "bg-white text-black border-black"
                                 }`}>
                                 {msg.text}
                               </p>
@@ -1983,7 +1988,7 @@ export default function App() {
             <footer className="flex flex-col sm:flex-row justify-between items-center text-[10px] font-mono font-bold uppercase tracking-widest text-black/80 border-t-2 border-black/25 pt-4">
               <div className="flex flex-wrap gap-4 sm:gap-8 justify-center sm:justify-start">
                 <span>Status: Sync Lock Active</span>
-                <span>Watch Link: lovestream/{roomId || "xxxx"}</span>
+                <span>Watch Link: love-stream.onrender.com/{roomId || "xxxx"}</span>
                 <span>Secure socket tunnel: 100% encrypted</span>
               </div>
               <div className="bg-black text-white px-4 py-1 border-2 border-black shadow-[4px_4px_0px_0px_rgba(255,255,255,1)] mt-2 sm:mt-0">
