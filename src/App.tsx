@@ -1987,7 +1987,7 @@ export default function App() {
                 <span>Secure socket tunnel: 100% encrypted</span>
               </div>
               <div className="bg-black text-white px-4 py-1 border-2 border-black shadow-[4px_4px_0px_0px_rgba(255,255,255,1)] mt-2 sm:mt-0">
-                Designed for Watch Parties
+                Made by Ankit Khatri KC
               </div>
             </footer>
 
