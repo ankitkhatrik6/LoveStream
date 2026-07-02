@@ -2,7 +2,6 @@ import express from "express";
 import path from "path";
 import { createServer } from "http";
 import { WebSocket, WebSocketServer } from "ws";
-import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 
 // Load environment variables
@@ -463,6 +462,7 @@ wss.on("connection", (ws) => {
 // Configure Vite middleware in development or express.static in production
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -478,10 +478,25 @@ async function startServer() {
     console.log(`[Production] Serving static files from ${distPath}`);
   }
 
+  server.on("error", (err) => {
+    console.error("[Server Error] Failed to start or crashed:", err);
+  });
+
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`[Server] LoveStream running on http://localhost:${PORT}`);
   });
 }
+
+// Global error handlers to prevent silent exits on Render
+process.on("uncaughtException", (err) => {
+  console.error("[Uncaught Exception]", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[Unhandled Rejection] at:", promise, "reason:", reason);
+  process.exit(1);
+});
 
 startServer().catch((err) => {
   console.error("Failed to start the Express + Vite server:", err);
