@@ -1,0 +1,110 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Syne:wght@700;800&family=JetBrains+Mono:wght@400;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Syne", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  
+  --color-brand-pink: #FF2E63;
+  --color-brand-red: #e11d48;
+  --color-brand-dark: #000000;
+  --color-brand-yellow: #facc15;
+  --color-brand-lavender: #f3e8ff;
+}
+
+@layer base {
+  body {
+    background-color: #FF2E63;
+    color: #000000;
+    font-family: var(--font-sans);
+    overflow-x: hidden;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    font-weight: 800;
+  }
+}
+
+/* Custom scrollbars with bold styling */
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #ffffff;
+  border-left: 4px solid #000000;
+}
+::-webkit-scrollbar-thumb {
+  background: #FF2E63;
+  border: 3px solid #ffffff;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #000000;
+}
+
+/* Flying Emojis Animation */
+@keyframes float-emoji {
+  0% {
+    transform: translateY(100%) scale(0.5) rotate(0deg);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(80%) scale(1.3) rotate(10deg);
+  }
+  50% {
+    transform: translateY(30%) scale(1) rotate(-15deg);
+  }
+  100% {
+    transform: translateY(-400px) scale(0.8) rotate(15deg);
+    opacity: 0;
+  }
+}
+
+.animate-float-emoji {
+  animation: float-emoji 2.5s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+/* Neobrutalist borders & shadows */
+.neo-border {
+  border: 4px solid #000000;
+}
+
+.neo-shadow-black {
+  box-shadow: 8px 8px 0px 0px #000000;
+}
+
+.neo-shadow-black-lg {
+  box-shadow: 12px 12px 0px 0px #000000;
+}
+
+.neo-shadow-white {
+  box-shadow: 8px 8px 0px 0px #ffffff;
+}
+
+.neo-shadow-pink {
+  box-shadow: 8px 8px 0px 0px #FF2E63;
+}
+
+/* Glow effects */
+.text-glow-pink {
+  text-shadow: 0 0 10px rgba(255, 46, 99, 0.6);
+}
+
+/* Pulse animation for active sync status */
+@keyframes pulse-sync {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.05);
+  }
+}
+
+.animate-pulse-sync {
+  animation: pulse-sync 2s infinite ease-in-out;
+}
+
