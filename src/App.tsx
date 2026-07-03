@@ -547,36 +547,54 @@ export default function App() {
 
         switch (type) {
           case "room_created":
-          case "room_joined": {
-            const { roomId: rId, users: rUsers, currentVideoId: rVideoId, playbackState, chatHistory: rHistory } = payload;
+          case "room_joined":
+          case "room_rejoined": {
+            const { roomId: rId, users: rUsers, currentVideoId: rVideoId, playbackState, chatHistory: rHistory, isReconnect } = payload;
             setRoomId(rId);
             roomIdRef.current = rId;
             setUsers(rUsers);
-            _setCurrentVideoId(rVideoId);
-            setChatHistory(rHistory || []);
-            setIsPlaying(playbackState.playing);
-            setInRoom(true);
-            inRoomRef.current = true;
             setLoading(false);
             setHasInteracted(true);
+            setInRoom(true);
+            inRoomRef.current = true;
+
+            // On a silent reconnect, preserve chat history and don't re-push URL
+            if (!isReconnect) {
+              _setCurrentVideoId(rVideoId);
+              setChatHistory(rHistory || []);
+              setIsPlaying(playbackState.playing);
+
+              // Push room code to URL query without fully reloading page
+              const newUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${rId}`;
+              window.history.pushState({ path: newUrl }, "", newUrl);
+            } else {
+              // Reconnect: only update video/state if they've changed (partner may have changed video while we were offline)
+              if (rVideoId && rVideoId !== currentVideoIdRef.current) {
+                _setCurrentVideoId(rVideoId);
+                if (playerRef.current && typeof playerRef.current.loadVideoById === "function") {
+                  isUpdatingPlayerRef.current = true;
+                  playerRef.current.loadVideoById({ videoId: rVideoId, startSeconds: playbackState.currentTime || 0 });
+                  setTimeout(() => { isUpdatingPlayerRef.current = false; }, 1500);
+                }
+              }
+              setIsPlaying(playbackState.playing);
+            }
 
             // Sync player position after short delay to let iframe load
-            setTimeout(() => {
-              if (playerRef.current && playerRef.current.seekTo) {
-                isUpdatingPlayerRef.current = true;
-                playerRef.current.seekTo(playbackState.currentTime, true);
-                if (playbackState.playing) {
-                  playWithAutoplayFallback();
-                } else {
-                  playerRef.current.pauseVideo();
+            if (!isReconnect) {
+              setTimeout(() => {
+                if (playerRef.current && playerRef.current.seekTo) {
+                  isUpdatingPlayerRef.current = true;
+                  playerRef.current.seekTo(playbackState.currentTime, true);
+                  if (playbackState.playing) {
+                    playWithAutoplayFallback();
+                  } else {
+                    playerRef.current.pauseVideo();
+                  }
+                  setTimeout(() => { isUpdatingPlayerRef.current = false; }, 800);
                 }
-                setTimeout(() => { isUpdatingPlayerRef.current = false; }, 800);
-              }
-            }, 1000);
-
-            // Push room code to URL query without fully reloading page
-            const newUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${rId}`;
-            window.history.pushState({ path: newUrl }, "", newUrl);
+              }, 1000);
+            }
             break;
           }
 
@@ -716,7 +734,7 @@ export default function App() {
 
   // Keep-alive ping with pong timeout — detects silent socket drops
   useEffect(() => {
-    const PING_INTERVAL = 25000; // every 25s
+    const PING_INTERVAL = 15000; // every 15s — keeps connection alive through idle periods
     const PONG_TIMEOUT = 8000;   // expect pong within 8s
 
     const pingInterval = setInterval(() => {
@@ -731,6 +749,12 @@ export default function App() {
             socketRef.current.close();
           }
         }, PONG_TIMEOUT);
+      } else if (socket && socket.readyState === WebSocket.CLOSED && inRoomRef.current && roomIdRef.current) {
+        // Socket is fully closed but we're still in a room — reconnect immediately
+        console.warn("[WebSocket] Socket found CLOSED during ping check — reconnecting now.");
+        if (!reconnectTimeoutRef.current) {
+          connectToWebSocket("join_room", roomIdRef.current);
+        }
       }
     }, PING_INTERVAL);
 
@@ -1104,8 +1128,21 @@ export default function App() {
   // Chat Actions
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim() || !socketRef.current) return;
+    if (!chatInput.trim()) return;
 
+    // If socket is not open, attempt to reconnect then abort this send
+    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+      console.warn("[Chat] Socket not open — triggering reconnect before sending.");
+      if (inRoomRef.current && roomIdRef.current && !reconnectTimeoutRef.current) {
+        connectToWebSocket("join_room", roomIdRef.current);
+      }
+      // Keep the message in the input so the user can re-send after reconnect
+      setError("Reconnecting… please try sending again in a moment.");
+      setTimeout(() => setError(""), 4000);
+      return;
+    }
+
+    setError("");
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
     }

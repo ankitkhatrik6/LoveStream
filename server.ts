@@ -200,52 +200,80 @@ wss.on("connection", (ws) => {
             return;
           }
 
-          if (room.users.length >= 2) {
+          // Check if this username is already in the room (stale reconnect from same person)
+          const existingUserIndex = room.users.findIndex(u => u.username === username);
+          const isReconnect = existingUserIndex !== -1;
+
+          if (isReconnect) {
+            // Clean up the old stale socket entry
+            const oldUser = room.users[existingUserIndex];
+            const oldSocketId = oldUser.id;
+            connectedSockets.delete(oldSocketId);
+            socketToRoom.delete(oldSocketId);
+            socketToUser.delete(oldSocketId);
+
+            // Replace with the new socket
+            room.users[existingUserIndex] = { id: socketId, username };
+          } else if (room.users.length >= 2) {
             ws.send(JSON.stringify({
               type: "error",
               payload: { message: "This room is full! LoveStream rooms are private, limited to 2 people." }
             }));
             return;
+          } else {
+            // Brand new user joining
+            room.users.push({ id: socketId, username });
           }
 
           const newUser = { id: socketId, username };
-          room.users.push(newUser);
           socketToRoom.set(socketId, code);
           socketToUser.set(socketId, newUser);
 
-          // Send success room info to joiner
+          // Send success room info to joiner/rejoiner
           ws.send(JSON.stringify({
-            type: "room_joined",
+            type: isReconnect ? "room_rejoined" : "room_joined",
             payload: {
               roomId: code,
               users: room.users,
               currentVideoId: room.currentVideoId,
               playbackState: room.playbackState,
               chatHistory: room.chatHistory,
+              isReconnect,
             }
           }));
 
-          // Broadcast to the other user in the room
-          broadcastToRoom(code, {
-            type: "user_joined",
-            payload: {
-              user: newUser,
-              users: room.users,
-            }
-          }, socketId);
+          if (!isReconnect) {
+            // Broadcast to the other user in the room only for new joins
+            broadcastToRoom(code, {
+              type: "user_joined",
+              payload: {
+                user: newUser,
+                users: room.users,
+              }
+            }, socketId);
 
-          // Add system message
-          const sysMsg: ChatMessage = {
-            id: `sys-${Date.now()}`,
-            sender: "System 💖",
-            text: `${username} has joined the stream! Your watch party is now in full sync.`,
-            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          };
-          room.chatHistory.push(sysMsg);
-          broadcastToRoom(code, {
-            type: "chat_received",
-            payload: sysMsg,
-          });
+            // Add system message for new joins only
+            const sysMsg: ChatMessage = {
+              id: `sys-${Date.now()}`,
+              sender: "System 💖",
+              text: `${username} has joined the stream! Your watch party is now in full sync.`,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            };
+            room.chatHistory.push(sysMsg);
+            broadcastToRoom(code, {
+              type: "chat_received",
+              payload: sysMsg,
+            });
+          } else {
+            // Notify partner that this user is back (silently update their user list)
+            broadcastToRoom(code, {
+              type: "user_joined",
+              payload: {
+                user: newUser,
+                users: room.users,
+              }
+            }, socketId);
+          }
 
           break;
         }
