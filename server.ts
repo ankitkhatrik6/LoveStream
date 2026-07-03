@@ -499,8 +499,23 @@ async function startServer() {
     console.log("[Vite] Running in development mode with Vite middleware.");
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+
+    // Serve static assets with proper headers so crawlers can access them
+    app.use(express.static(distPath, {
+      maxAge: "1h",
+      setHeaders: (res, filePath) => {
+        // Ensure images and robots.txt are accessible to all crawlers
+        if (filePath.endsWith(".png") || filePath.endsWith(".jpg") || filePath.endsWith(".txt")) {
+          res.setHeader("Cache-Control", "public, max-age=3600");
+          res.setHeader("X-Robots-Tag", "all");
+        }
+      },
+    }));
+
+    // SPA catch-all: serve index.html with proper headers for crawlers
     app.get("*", (req, res) => {
+      res.setHeader("X-Robots-Tag", "all");
+      res.setHeader("Cache-Control", "no-cache");
       res.sendFile(path.join(distPath, "index.html"));
     });
     console.log(`[Production] Serving static files from ${distPath}`);
