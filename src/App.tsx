@@ -1852,9 +1852,9 @@ export default function App() {
               </div>
 
               {/* RIGHT AREA: REAL-TIME CHAT & REACTIONS (4/12 cols) */}
-              <div className="lg:col-span-4 flex flex-col gap-6">
+              <div className="lg:col-span-4 flex flex-col gap-6 lg:relative">
 
-                <aside className="border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] sm:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] flex flex-col h-[580px] lg:h-full relative">
+                <aside className="border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] sm:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] flex flex-col h-[580px] lg:h-full lg:absolute lg:inset-0 w-full relative">
                   {/* Chat Panel Header */}
                   <div className="bg-black text-white p-4 border-b-4 border-black flex justify-between items-center">
                     <h3 className="font-display font-black uppercase tracking-tighter text-md">
