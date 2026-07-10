@@ -53,6 +53,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
   const [remoteStreams, setRemoteStreams] = useState<Record<string, { stream: MediaStream; username: string }>>({});
 
   const localStreamRef = useRef<MediaStream | null>(null);
+  const isJoinedRef = useRef(false);
   // Map of socketId -> RTCPeerConnection
   const peerConnections = useRef<Record<string, RTCPeerConnection>>({});
   // Map of socketId -> RTCIceCandidateInit[] for candidates received before remote description is set
@@ -95,6 +96,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
   // Clear everything
   const stopAllMedia = () => {
     console.log("[WebRTC] Stopping all local media tracks & clearing peer connections.");
+    isJoinedRef.current = false;
     
     // Stop local camera/mic stream tracks
     if (localStreamRef.current) {
@@ -136,7 +138,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     // 1. Handle Calling Invitation Protocol
     if (type === "webrtc_signal" && signal) {
       if (signal.type === "call_invite") {
-        if (isJoined || callState === "connected") {
+        if (isJoinedRef.current || callState === "connected") {
           console.log("[WebRTC Call] Already in call, ignoring incoming invite.");
           return;
         }
@@ -170,7 +172,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     }
 
     // 2. Handle Connection Protocol (only when joined)
-    if (!isJoined) return;
+    if (!isJoinedRef.current) return;
 
     switch (type) {
       case "peer_joined_video_call": {
@@ -219,7 +221,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       case "peer_left_video_call":
       case "user_left": {
         console.log(`[WebRTC Msg] Peer disconnected/left call: ${senderId}`);
-        if (isJoined && senderId !== myId) {
+        if (isJoinedRef.current && senderId !== myId) {
           const partnerName = getUsernameById(senderId);
           setPartnerEndedCall(partnerName);
           stopAllMedia();
@@ -234,7 +236,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       default:
         break;
     }
-  }, [incomingMessage, isJoined, myId, callState]);
+  }, [incomingMessage, myId, callState]);
 
   // Handle local video element layout mapping
   useEffect(() => {
@@ -272,7 +274,12 @@ export const VideoCall: React.FC<VideoCallProps> = ({
             targetId: peerId,
             signal: {
               type: "candidate",
-              candidate: event.candidate
+              candidate: {
+                candidate: event.candidate.candidate,
+                sdpMid: event.candidate.sdpMid,
+                sdpMLineIndex: event.candidate.sdpMLineIndex,
+                usernameFragment: event.candidate.usernameFragment
+              }
             }
           }
         }));
@@ -574,6 +581,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
   const handleJoinCall = async () => {
     try {
       const stream = await startLocalMedia();
+      isJoinedRef.current = true;
       setIsJoined(true);
       setCallState("connected");
 
@@ -586,6 +594,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       }
     } catch (err) {
       // Handled in startLocalMedia
+      isJoinedRef.current = false;
       setCallState("idle");
     }
   };
@@ -599,6 +608,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       }));
     }
     stopAllMedia();
+    isJoinedRef.current = false;
     setIsJoined(false);
     setCallState("idle");
     setActiveCaller(null);
