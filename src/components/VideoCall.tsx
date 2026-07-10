@@ -26,7 +26,7 @@ interface VideoCallProps {
   roomId: string;
   myId: string;
   users: User[];
-  incomingMessage: { type: string; payload: any; _id?: number } | null;
+  onMessageSubscribe: (callback: (message: any) => void) => () => void;
 }
 
 export const VideoCall: React.FC<VideoCallProps> = ({
@@ -34,7 +34,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
   roomId,
   myId,
   users,
-  incomingMessage
+  onMessageSubscribe
 }) => {
   const [isJoined, setIsJoined] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
@@ -119,124 +119,125 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     setRemoteStreams({});
   };
 
-  const lastProcessedIdRef = useRef<number | null>(null);
-
   // Handle incoming signaling messages from App.tsx prop
   useEffect(() => {
-    if (!incomingMessage) return;
-    if (incomingMessage._id && incomingMessage._id === lastProcessedIdRef.current) return;
-    if (incomingMessage._id) lastProcessedIdRef.current = incomingMessage._id;
+    const handleIncomingMessage = (message: any) => {
+      const { type, payload } = message;
+      const { senderId, signal } = payload;
 
-    const { type, payload } = incomingMessage;
-    const { senderId, signal } = payload;
+      // Skip self-messages or invalid sender/receiver state
+      if (!myId || !senderId || senderId === myId) return;
 
-    // Skip self-messages or invalid sender/receiver state
-    if (!myId || !senderId || senderId === myId) return;
+      const senderName = getUsernameById(senderId);
 
-    const senderName = getUsernameById(senderId);
-
-    // 1. Handle Calling Invitation Protocol
-    if (type === "webrtc_signal" && signal) {
-      if (signal.type === "call_invite") {
-        if (isJoinedRef.current || callState === "connected") {
-          console.log("[WebRTC Call] Already in call, ignoring incoming invite.");
+      // 1. Handle Calling Invitation Protocol
+      if (type === "webrtc_signal" && signal) {
+        if (signal.type === "call_invite") {
+          if (isJoinedRef.current || callState === "connected") {
+            console.log("[WebRTC Call] Already in call, ignoring incoming invite.");
+            return;
+          }
+          console.log(`[WebRTC Call] Received call_invite from ${senderName} (${senderId})`);
+          setCallState("invited");
+          setActiveCaller({ id: senderId, name: senderName });
+          setError(""); // Clear old errors
           return;
         }
-        console.log(`[WebRTC Call] Received call_invite from ${senderName} (${senderId})`);
-        setCallState("invited");
-        setActiveCaller({ id: senderId, name: senderName });
-        setError(""); // Clear old errors
-        return;
-      }
 
-      if (signal.type === "call_cancel") {
-        console.log(`[WebRTC Call] Caller ${senderName} cancelled the invite.`);
-        setCallState("idle");
-        setActiveCaller(null);
-        return;
-      }
-
-      if (signal.type === "call_decline") {
-        console.log(`[WebRTC Call] Partner ${senderName} declined the invite.`);
-        setCallState("idle");
-        setError(`${senderName} declined the video call.`);
-        return;
-      }
-
-      if (signal.type === "call_accept") {
-        console.log(`[WebRTC Call] Partner ${senderName} accepted our invite! Connecting...`);
-        setError("");
-        handleJoinCall();
-        return;
-      }
-    }
-
-    // 2. Handle Connection Protocol (only when joined)
-    if (!isJoinedRef.current) return;
-
-    switch (type) {
-      case "peer_joined_video_call": {
-        console.log(`[WebRTC Msg] Peer joined call: ${senderName} (${senderId})`);
-        // We respond to let them know we are also in the call
-        if (socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({
-            type: "peer_present_response",
-            payload: { targetId: senderId }
-          }));
-        }
-
-        // Check if we are the initiator (alphabetical connection ordering)
-        // If our ID is "smaller", we start the offer negotiation
-        if (myId < senderId) {
-          initiateCall(senderId, senderName);
-        }
-        break;
-      }
-
-      case "peer_present": {
-        console.log(`[WebRTC Msg] Received peer_present from ${senderName} (${senderId})`);
-        // Existing peer is in call. If we are the initiator, create the offer
-        if (myId < senderId) {
-          initiateCall(senderId, senderName);
-        }
-        break;
-      }
-
-      case "webrtc_signal": {
-        if (!signal) return;
-        
-        if (signal.type === "offer") {
-          console.log(`[WebRTC Msg] Received SDP offer from ${senderName}`);
-          handleOffer(senderId, senderName, signal.sdp);
-        } else if (signal.type === "answer") {
-          console.log(`[WebRTC Msg] Received SDP answer from ${senderName}`);
-          handleAnswer(senderId, signal.sdp);
-        } else if (signal.type === "candidate") {
-          console.log(`[WebRTC Msg] Received ICE candidate from ${senderName}`);
-          handleCandidate(senderId, signal.candidate);
-        }
-        break;
-      }
-
-      case "peer_left_video_call":
-      case "user_left": {
-        console.log(`[WebRTC Msg] Peer disconnected/left call: ${senderId}`);
-        if (isJoinedRef.current && senderId !== myId) {
-          const partnerName = getUsernameById(senderId);
-          setPartnerEndedCall(partnerName);
-          stopAllMedia();
-          setIsJoined(false);
+        if (signal.type === "call_cancel") {
+          console.log(`[WebRTC Call] Caller ${senderName} cancelled the invite.`);
           setCallState("idle");
           setActiveCaller(null);
+          return;
         }
-        handlePeerDisconnect(senderId);
-        break;
+
+        if (signal.type === "call_decline") {
+          console.log(`[WebRTC Call] Partner ${senderName} declined the invite.`);
+          setCallState("idle");
+          setError(`${senderName} declined the video call.`);
+          return;
+        }
+
+        if (signal.type === "call_accept") {
+          console.log(`[WebRTC Call] Partner ${senderName} accepted our invite! Connecting...`);
+          setError("");
+          handleJoinCall();
+          return;
+        }
       }
 
-      default:
-        break;
-    }
-  }, [incomingMessage, myId, callState]);
+      // 2. Handle Connection Protocol (only when joined)
+      if (!isJoinedRef.current) return;
+
+      switch (type) {
+        case "peer_joined_video_call": {
+          console.log(`[WebRTC Msg] Peer joined call: ${senderName} (${senderId})`);
+          // We respond to let them know we are also in the call
+          if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+              type: "peer_present_response",
+              payload: { targetId: senderId }
+            }));
+          }
+
+          // Check if we are the initiator (alphabetical connection ordering)
+          // If our ID is "smaller", we start the offer negotiation
+          if (myId < senderId) {
+            initiateCall(senderId, senderName);
+          }
+          break;
+        }
+
+        case "peer_present": {
+          console.log(`[WebRTC Msg] Received peer_present from ${senderName} (${senderId})`);
+          // Existing peer is in call. If we are the initiator, create the offer
+          if (myId < senderId) {
+            initiateCall(senderId, senderName);
+          }
+          break;
+        }
+
+        case "webrtc_signal": {
+          if (!signal) return;
+          
+          if (signal.type === "offer") {
+            console.log(`[WebRTC Msg] Received SDP offer from ${senderName}`);
+            handleOffer(senderId, senderName, signal.sdp);
+          } else if (signal.type === "answer") {
+            console.log(`[WebRTC Msg] Received SDP answer from ${senderName}`);
+            handleAnswer(senderId, signal.sdp);
+          } else if (signal.type === "candidate") {
+            console.log(`[WebRTC Msg] Received ICE candidate from ${senderName}`);
+            handleCandidate(senderId, signal.candidate);
+          }
+          break;
+        }
+
+        case "peer_left_video_call":
+        case "user_left": {
+          console.log(`[WebRTC Msg] Peer disconnected/left call: ${senderId}`);
+          if (isJoinedRef.current && senderId !== myId) {
+            const partnerName = getUsernameById(senderId);
+            setPartnerEndedCall(partnerName);
+            stopAllMedia();
+            setIsJoined(false);
+            setCallState("idle");
+            setActiveCaller(null);
+          }
+          handlePeerDisconnect(senderId);
+          break;
+        }
+
+        default:
+          break;
+      }
+    };
+
+    const unsubscribe = onMessageSubscribe(handleIncomingMessage);
+    return () => {
+      unsubscribe();
+    };
+  }, [onMessageSubscribe, myId, callState, socket, users]);
 
   // Handle local video element layout mapping
   useEffect(() => {
@@ -294,19 +295,44 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       }
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log(`[WebRTC] ICE Connection state for ${peerName}: ${pc.iceConnectionState}`);
+      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
+        handlePeerDisconnect(peerId);
+      }
+    };
+
     // Track remote stream insertion
     pc.ontrack = (event) => {
-      const rStream = event.streams[0];
-      if (rStream) {
-        console.log(`[WebRTC] Mounting remote stream tracks for ${peerName}`);
-        setRemoteStreams((prev) => ({
+      console.log(`[WebRTC] ontrack event fired for ${peerName}, track kind: ${event.track.kind}`);
+      
+      setRemoteStreams((prev) => {
+        const existing = prev[peerId];
+        let stream: MediaStream;
+        
+        if (existing && existing.stream) {
+          stream = existing.stream;
+          // Add track if it's not already in the stream
+          if (!stream.getTracks().find(t => t.id === event.track.id)) {
+            stream.addTrack(event.track);
+          }
+        } else {
+          // If the event provides a stream, use it, otherwise construct one
+          if (event.streams && event.streams[0]) {
+            stream = event.streams[0];
+          } else {
+            stream = new MediaStream([event.track]);
+          }
+        }
+        
+        return {
           ...prev,
           [peerId]: {
-            stream: rStream,
+            stream,
             username: peerName
           }
-        }));
-      }
+        };
+      });
     };
 
     // Add local tracks to peer connection
@@ -417,7 +443,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 
       for (const cand of candidates) {
         console.log(`[WebRTC] Applying queued ICE candidate for peer ${peerId}`);
-        await pc.addIceCandidate(new RTCIceCandidate(cand));
+        await pc.addIceCandidate(cand);
       }
     } catch (err: any) {
       console.warn(`[WebRTC] Failed to apply queued ICE candidates for peer ${peerId}:`, err);
@@ -429,7 +455,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     try {
       const pc = peerConnections.current[peerId];
       if (pc && pc.remoteDescription) {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        await pc.addIceCandidate(candidate);
       } else {
         console.log(`[WebRTC] Queueing ICE candidate for peer ${peerId} (remote description not set yet)`);
         if (!pendingCandidates.current[peerId]) {
@@ -929,6 +955,13 @@ const RemoteVideoFeed: React.FC<RemoteVideoFeedProps> = ({ stream, username }) =
   useEffect(() => {
     if (remoteVideoRef.current && stream) {
       remoteVideoRef.current.srcObject = stream;
+      remoteVideoRef.current.play().catch((err) => {
+        console.warn(`[WebRTC] Failed to autoplay remote video stream, attempting muted playback:`, err);
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.muted = true;
+          remoteVideoRef.current.play().catch(e => console.error("Muted play failed:", e));
+        }
+      });
     }
   }, [stream]);
 

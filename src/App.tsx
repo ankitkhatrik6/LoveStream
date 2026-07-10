@@ -280,6 +280,7 @@ export default function App() {
   // WebRTC Video Call states
   const [myId, setMyId] = useState("");
   const [incomingCallMessage, setIncomingCallMessage] = useState<{ type: string; payload: any } | null>(null);
+  const webrtcListenerRef = useRef<((msg: any) => void) | null>(null);
 
   // UI States
   const [copied, setCopied] = useState(false);
@@ -631,6 +632,9 @@ export default function App() {
             setUsers(rUsers);
             if (user && user.id) {
               setIncomingCallMessage({ type: "user_left", payload: { senderId: user.id } });
+              if (webrtcListenerRef.current) {
+                webrtcListenerRef.current({ type: "user_left", payload: { senderId: user.id } });
+              }
             }
             break;
           }
@@ -640,6 +644,9 @@ export default function App() {
           case "peer_present":
           case "webrtc_signal": {
             setIncomingCallMessage({ type, payload, _id: Date.now() + Math.random() });
+            if (webrtcListenerRef.current) {
+              webrtcListenerRef.current({ type, payload });
+            }
             break;
           }
 
@@ -1691,7 +1698,12 @@ export default function App() {
                 roomId={roomId}
                 myId={myId}
                 users={users}
-                incomingMessage={incomingCallMessage}
+                onMessageSubscribe={(callback) => {
+                  webrtcListenerRef.current = callback;
+                  return () => {
+                    webrtcListenerRef.current = null;
+                  };
+                }}
               />
             </div>
 
