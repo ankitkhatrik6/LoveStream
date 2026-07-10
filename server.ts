@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { createServer } from "http";
 import { WebSocket, WebSocketServer } from "ws";
+import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 
 // Load environment variables
@@ -32,12 +33,14 @@ interface Room {
   currentVideoId: string;
   playbackState: PlaybackState;
   chatHistory: ChatMessage[];
+  loveScore?: number;
 }
 
 const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true });
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+const PORT = 3000;
 
 // State management
 const rooms = new Map<string, Room>();
@@ -63,7 +66,7 @@ function broadcastToRoom(roomId: string, message: any, excludeSocketId?: string)
   const room = rooms.get(roomId);
   if (!room) return;
   const payload = JSON.stringify(message);
-
+  
   room.users.forEach((user) => {
     if (user.id === excludeSocketId) return;
     const client = connectedSockets.get(user.id);
@@ -83,8 +86,8 @@ app.get("/api/health", (req, res) => {
 // Create a room via HTTP POST (optional shortcut, but websocket is fine too)
 app.post("/api/rooms", (req, res) => {
   const code = generateRoomCode();
-  const defaultVideoId = ""; // No default video loaded initially
-
+  const defaultVideoId = "Aj-nPW-VEuo"; // Rewrite the Stars
+  
   const room: Room = {
     roomId: code,
     users: [],
@@ -102,8 +105,9 @@ app.post("/api/rooms", (req, res) => {
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       }
     ],
+    loveScore: 0,
   };
-
+  
   rooms.set(code, room);
   res.status(201).json({ roomId: code });
 });
@@ -113,7 +117,7 @@ server.on("upgrade", (request, socket, head) => {
   try {
     const url = request.url || "";
     const pathname = url.split("?")[0];
-
+    
     if (pathname === "/ws" || pathname === "/ws/") {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit("connection", ws, request);
@@ -133,7 +137,7 @@ wss.on("error", (err) => {
 wss.on("connection", (ws) => {
   const socketId = Math.random().toString(36).substring(2, 11);
   connectedSockets.set(socketId, ws);
-
+  
   console.log(`[WS] Client connected: ${socketId}`);
 
   ws.on("error", (err) => {
@@ -144,13 +148,13 @@ wss.on("connection", (ws) => {
     try {
       const data = JSON.parse(rawMessage.toString());
       const { type, payload } = data;
-
+      
       switch (type) {
         case "create_room": {
           const { username, videoId } = payload;
           const code = generateRoomCode();
-          const defaultVideoId = videoId || ""; // No default video loaded initially
-
+          const defaultVideoId = videoId || "Aj-nPW-VEuo"; // Rewrite the Stars
+          
           const room: Room = {
             roomId: code,
             users: [{ id: socketId, username }],
@@ -168,20 +172,23 @@ wss.on("connection", (ws) => {
                 timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               }
             ],
+            loveScore: 0,
           };
-
+          
           rooms.set(code, room);
           socketToRoom.set(socketId, code);
           socketToUser.set(socketId, { id: socketId, username });
-
+          
           ws.send(JSON.stringify({
             type: "room_created",
             payload: {
               roomId: code,
+              myId: socketId,
               users: room.users,
               currentVideoId: room.currentVideoId,
               playbackState: room.playbackState,
               chatHistory: room.chatHistory,
+              loveScore: room.loveScore,
             }
           }));
           break;
@@ -191,7 +198,7 @@ wss.on("connection", (ws) => {
           const { roomId, username } = payload;
           const code = roomId.toUpperCase().trim();
           const room = rooms.get(code);
-
+          
           if (!room) {
             ws.send(JSON.stringify({
               type: "error",
@@ -199,82 +206,56 @@ wss.on("connection", (ws) => {
             }));
             return;
           }
-
-          // Check if this username is already in the room (stale reconnect from same person)
-          const existingUserIndex = room.users.findIndex(u => u.username === username);
-          const isReconnect = existingUserIndex !== -1;
-
-          if (isReconnect) {
-            // Clean up the old stale socket entry
-            const oldUser = room.users[existingUserIndex];
-            const oldSocketId = oldUser.id;
-            connectedSockets.delete(oldSocketId);
-            socketToRoom.delete(oldSocketId);
-            socketToUser.delete(oldSocketId);
-
-            // Replace with the new socket
-            room.users[existingUserIndex] = { id: socketId, username };
-          } else if (room.users.length >= 2) {
+          
+          if (room.users.length >= 2) {
             ws.send(JSON.stringify({
               type: "error",
               payload: { message: "This room is full! LoveStream rooms are private, limited to 2 people." }
             }));
             return;
-          } else {
-            // Brand new user joining
-            room.users.push({ id: socketId, username });
           }
-
+          
           const newUser = { id: socketId, username };
+          room.users.push(newUser);
           socketToRoom.set(socketId, code);
           socketToUser.set(socketId, newUser);
-
-          // Send success room info to joiner/rejoiner
+          
+          // Send success room info to joiner
           ws.send(JSON.stringify({
-            type: isReconnect ? "room_rejoined" : "room_joined",
+            type: "room_joined",
             payload: {
               roomId: code,
+              myId: socketId,
               users: room.users,
               currentVideoId: room.currentVideoId,
               playbackState: room.playbackState,
               chatHistory: room.chatHistory,
-              isReconnect,
+              loveScore: room.loveScore || 0,
             }
           }));
-
-          if (!isReconnect) {
-            // Broadcast to the other user in the room only for new joins
-            broadcastToRoom(code, {
-              type: "user_joined",
-              payload: {
-                user: newUser,
-                users: room.users,
-              }
-            }, socketId);
-
-            // Add system message for new joins only
-            const sysMsg: ChatMessage = {
-              id: `sys-${Date.now()}`,
-              sender: "System 💖",
-              text: `${username} has joined the stream! Your watch party is now in full sync.`,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-            };
-            room.chatHistory.push(sysMsg);
-            broadcastToRoom(code, {
-              type: "chat_received",
-              payload: sysMsg,
-            });
-          } else {
-            // Notify partner that this user is back (silently update their user list)
-            broadcastToRoom(code, {
-              type: "user_joined",
-              payload: {
-                user: newUser,
-                users: room.users,
-              }
-            }, socketId);
-          }
-
+          
+          // Broadcast to the other user in the room
+          broadcastToRoom(code, {
+            type: "user_joined",
+            payload: {
+              user: newUser,
+              users: room.users,
+            }
+          }, socketId);
+          
+          // Add system message
+          const sysMsg: ChatMessage = {
+            id: `sys-${Date.now()}`,
+            sender: "System 💖",
+            text: `${username} has joined the stream! Your watch party is now in full sync.`,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          };
+          room.chatHistory.push(sysMsg);
+          broadcastToRoom(code, {
+            type: "chat_received",
+            payload: sysMsg,
+          });
+          
           break;
         }
 
@@ -282,16 +263,16 @@ wss.on("connection", (ws) => {
           const { playing, currentTime } = payload;
           const roomId = socketToRoom.get(socketId);
           if (!roomId) return;
-
+          
           const room = rooms.get(roomId);
           if (!room) return;
-
+          
           room.playbackState = {
             playing,
             currentTime,
             lastUpdated: Date.now(),
           };
-
+          
           // Broadcast player action to other person
           broadcastToRoom(roomId, {
             type: "player_sync",
@@ -308,20 +289,20 @@ wss.on("connection", (ws) => {
           const { videoId } = payload;
           const roomId = socketToRoom.get(socketId);
           if (!roomId) return;
-
+          
           const room = rooms.get(roomId);
           if (!room) return;
-
+          
           room.currentVideoId = videoId;
           room.playbackState = {
             playing: false,
             currentTime: 0,
             lastUpdated: Date.now(),
           };
-
+          
           const user = socketToUser.get(socketId);
           const senderName = user ? user.username : "Partner";
-
+          
           // System message about video change
           const sysMsg: ChatMessage = {
             id: `sys-${Date.now()}`,
@@ -330,7 +311,7 @@ wss.on("connection", (ws) => {
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           };
           room.chatHistory.push(sysMsg);
-
+          
           // Broadcast new video and update clients
           broadcastToRoom(roomId, {
             type: "video_changed",
@@ -339,7 +320,7 @@ wss.on("connection", (ws) => {
               senderId: socketId,
             }
           }, socketId);
-
+          
           broadcastToRoom(roomId, {
             type: "chat_received",
             payload: sysMsg,
@@ -351,22 +332,22 @@ wss.on("connection", (ws) => {
           const { text } = payload;
           const roomId = socketToRoom.get(socketId);
           if (!roomId) return;
-
+          
           const room = rooms.get(roomId);
           if (!room) return;
-
+          
           const user = socketToUser.get(socketId);
           if (!user) return;
-
+          
           const message: ChatMessage = {
             id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
             sender: user.username,
             text,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           };
-
+          
           room.chatHistory.push(message);
-
+          
           // Broadcast chat to everyone in room (including sender so we keep synced history)
           broadcastToRoom(roomId, {
             type: "chat_received",
@@ -381,7 +362,7 @@ wss.on("connection", (ws) => {
           if (!roomId) return;
           const user = socketToUser.get(socketId);
           if (!user) return;
-
+          
           broadcastToRoom(roomId, {
             type: "typing_state",
             payload: {
@@ -400,20 +381,20 @@ wss.on("connection", (ws) => {
           if (!room) return;
           const user = socketToUser.get(socketId);
           if (!user) return;
-
+          
           const msg = room.chatHistory.find(m => m.id === messageId);
           if (msg) {
             if (!msg.reactions) {
               msg.reactions = {};
             }
-
+            
             // If the user already reacted with this emoji, toggle it off.
             if (msg.reactions[user.username] === emoji) {
               delete msg.reactions[user.username];
             } else {
               msg.reactions[user.username] = emoji;
             }
-
+            
             // Broadcast update to everyone in the room
             broadcastToRoom(roomId, {
               type: "reaction_updated",
@@ -423,6 +404,105 @@ wss.on("connection", (ws) => {
               }
             });
           }
+          break;
+        }
+
+        case "join_video_call": {
+          const roomId = socketToRoom.get(socketId);
+          if (!roomId) return;
+          const user = socketToUser.get(socketId);
+          if (!user) return;
+          
+          console.log(`[WS Video Call] User ${user.username} (${socketId}) joining call in room ${roomId}`);
+          broadcastToRoom(roomId, {
+            type: "peer_joined_video_call",
+            payload: {
+              senderId: socketId,
+              senderName: user.username,
+            }
+          }, socketId);
+          break;
+        }
+
+        case "leave_video_call": {
+          const roomId = socketToRoom.get(socketId);
+          if (!roomId) return;
+          const user = socketToUser.get(socketId);
+          if (!user) return;
+          
+          console.log(`[WS Video Call] User ${user.username} (${socketId}) leaving call in room ${roomId}`);
+          broadcastToRoom(roomId, {
+            type: "peer_left_video_call",
+            payload: {
+              senderId: socketId,
+            }
+          }, socketId);
+          break;
+        }
+
+        case "peer_present_response": {
+          const { targetId } = payload;
+          const roomId = socketToRoom.get(socketId);
+          if (!roomId) return;
+          const user = socketToUser.get(socketId);
+          if (!user) return;
+          
+          console.log(`[WS Video Call] User ${user.username} (${socketId}) responding as present to target ${targetId}`);
+          const targetSocket = connectedSockets.get(targetId);
+          if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
+            targetSocket.send(JSON.stringify({
+              type: "peer_present",
+              payload: {
+                senderId: socketId,
+                senderName: user.username,
+              }
+            }));
+          }
+          break;
+        }
+
+        case "webrtc_signal": {
+          const { targetId, signal } = payload;
+          const roomId = socketToRoom.get(socketId);
+          if (!roomId) return;
+          const user = socketToUser.get(socketId);
+          if (!user) return;
+          
+          const targetSocket = connectedSockets.get(targetId);
+          if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
+            targetSocket.send(JSON.stringify({
+              type: "webrtc_signal",
+              payload: {
+                senderId: socketId,
+                senderName: user.username,
+                signal,
+              }
+            }));
+          }
+          break;
+        }
+
+        case "send_heart": {
+          const roomId = socketToRoom.get(socketId);
+          if (!roomId) return;
+          
+          const room = rooms.get(roomId);
+          if (!room) return;
+          
+          const user = socketToUser.get(socketId);
+          if (!user) return;
+          
+          // Increment love score by 10 points
+          room.loveScore = (room.loveScore || 0) + 10;
+          
+          // Broadcast heart action with updated score to both users
+          broadcastToRoom(roomId, {
+            type: "heart_received",
+            payload: {
+              loveScore: room.loveScore,
+              senderName: user.username,
+            }
+          });
           break;
         }
 
@@ -441,20 +521,20 @@ wss.on("connection", (ws) => {
 
   ws.on("close", () => {
     console.log(`[WS] Client disconnected: ${socketId}`);
-
+    
     const roomId = socketToRoom.get(socketId);
     const user = socketToUser.get(socketId);
-
+    
     connectedSockets.delete(socketId);
     socketToRoom.delete(socketId);
     socketToUser.delete(socketId);
-
+    
     if (roomId && user) {
       const room = rooms.get(roomId);
       if (room) {
         // Remove user from room
         room.users = room.users.filter((u) => u.id !== socketId);
-
+        
         if (room.users.length === 0) {
           // Room is empty, delete it
           console.log(`[WS] Room ${roomId} is empty, cleaning up.`);
@@ -468,7 +548,7 @@ wss.on("connection", (ws) => {
               users: room.users,
             }
           });
-
+          
           // Add system message
           const sysMsg: ChatMessage = {
             id: `sys-${Date.now()}`,
@@ -490,7 +570,6 @@ wss.on("connection", (ws) => {
 // Configure Vite middleware in development or express.static in production
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -499,47 +578,17 @@ async function startServer() {
     console.log("[Vite] Running in development mode with Vite middleware.");
   } else {
     const distPath = path.join(process.cwd(), "dist");
-
-    // Serve static assets with proper headers so crawlers can access them
-    app.use(express.static(distPath, {
-      maxAge: "1h",
-      setHeaders: (res, filePath) => {
-        // Ensure images and robots.txt are accessible to all crawlers
-        if (filePath.endsWith(".png") || filePath.endsWith(".jpg") || filePath.endsWith(".txt")) {
-          res.setHeader("Cache-Control", "public, max-age=3600");
-          res.setHeader("X-Robots-Tag", "all");
-        }
-      },
-    }));
-
-    // SPA catch-all: serve index.html with proper headers for crawlers
+    app.use(express.static(distPath));
     app.get("*", (req, res) => {
-      res.setHeader("X-Robots-Tag", "all");
-      res.setHeader("Cache-Control", "no-cache");
       res.sendFile(path.join(distPath, "index.html"));
     });
     console.log(`[Production] Serving static files from ${distPath}`);
   }
 
-  server.on("error", (err) => {
-    console.error("[Server Error] Failed to start or crashed:", err);
-  });
-
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`[Server] LoveStream running on http://localhost:${PORT}`);
   });
 }
-
-// Global error handlers to prevent silent exits on Render
-process.on("uncaughtException", (err) => {
-  console.error("[Uncaught Exception]", err);
-  process.exit(1);
-});
-
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("[Unhandled Rejection] at:", promise, "reason:", reason);
-  process.exit(1);
-});
 
 startServer().catch((err) => {
   console.error("Failed to start the Express + Vite server:", err);

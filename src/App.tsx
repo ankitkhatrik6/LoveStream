@@ -26,6 +26,7 @@ import {
   Smile
 } from "lucide-react";
 import MockSyncShowcase from "./components/MockSyncShowcase";
+import { VideoCall } from "./components/VideoCall";
 
 // Memoized container to prevent React from destroying the YouTube iframe during re-renders
 const YouTubePlayerPlaceholder = React.memo(() => {
@@ -276,9 +277,16 @@ export default function App() {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
 
+  // WebRTC Video Call states
+  const [myId, setMyId] = useState("");
+  const [incomingCallMessage, setIncomingCallMessage] = useState<{ type: string; payload: any } | null>(null);
+
   // UI States
   const [copied, setCopied] = useState(false);
   const [flyingEmojis, setFlyingEmojis] = useState<FlyingEmoji[]>([]);
+  const [loveScore, setLoveScore] = useState(0);
+  const [lastHeartSender, setLastHeartSender] = useState<string | null>(null);
+  const [showHeartPopup, setShowHeartPopup] = useState(false);
   const [loading, setLoading] = useState(false);
   const [hasInteracted, setHasInteractedState] = useState(false);
   const hasInteractedRef = useRef(false);
@@ -312,6 +320,16 @@ export default function App() {
   useEffect(() => {
     volumeRef.current = volume;
   }, [volume]);
+
+  useEffect(() => {
+    if (loveScore > 0) {
+      setShowHeartPopup(true);
+      const timer = setTimeout(() => {
+        setShowHeartPopup(false);
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [loveScore]);
 
   // Real-time typing indicators & message reaction states
   const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({});
@@ -549,10 +567,14 @@ export default function App() {
           case "room_created":
           case "room_joined":
           case "room_rejoined": {
-            const { roomId: rId, users: rUsers, currentVideoId: rVideoId, playbackState, chatHistory: rHistory, isReconnect } = payload;
+            const { roomId: rId, myId: mId, users: rUsers, currentVideoId: rVideoId, playbackState, chatHistory: rHistory, isReconnect, loveScore: rLoveScore } = payload;
             setRoomId(rId);
             roomIdRef.current = rId;
             setUsers(rUsers);
+            if (rLoveScore !== undefined) {
+              setLoveScore(rLoveScore);
+            }
+            if (mId) setMyId(mId);
             setLoading(false);
             setHasInteracted(true);
             setInRoom(true);
@@ -605,8 +627,19 @@ export default function App() {
           }
 
           case "user_left": {
-            const { users: rUsers } = payload;
+            const { users: rUsers, user } = payload;
             setUsers(rUsers);
+            if (user && user.id) {
+              setIncomingCallMessage({ type: "user_left", payload: { senderId: user.id } });
+            }
+            break;
+          }
+
+          case "peer_joined_video_call":
+          case "peer_left_video_call":
+          case "peer_present":
+          case "webrtc_signal": {
+            setIncomingCallMessage({ type, payload, _id: Date.now() + Math.random() });
             break;
           }
 
@@ -662,6 +695,19 @@ export default function App() {
             if (message.text.startsWith("sent reaction: ")) {
               const emoji = message.text.replace("sent reaction: ", "").trim();
               triggerFlyingEmoji(emoji);
+            }
+            break;
+          }
+
+          case "heart_received": {
+            const { loveScore: newScore, senderName } = payload;
+            setLoveScore(newScore);
+            setLastHeartSender(senderName);
+            // Spawn 6 beautifully animated flying heart emojis!
+            for (let i = 0; i < 6; i++) {
+              setTimeout(() => {
+                triggerFlyingEmoji("❤️");
+              }, i * 150 + Math.random() * 100);
             }
             break;
           }
@@ -1205,6 +1251,13 @@ export default function App() {
     }));
   };
 
+  const sendHeart = () => {
+    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
+    socketRef.current.send(JSON.stringify({
+      type: "send_heart"
+    }));
+  };
+
   // Copy share link helper — uses Web Share API on mobile (works on HTTP too)
   const copyInviteLink = async () => {
     const shareUrl = `${window.location.origin}?room=${roomId}`;
@@ -1631,6 +1684,17 @@ export default function App() {
               </div>
             </section>
 
+            {/* REAL-TIME P2P VIDEO DIALS (Full-width top section) */}
+            <div className="w-full mb-6">
+              <VideoCall
+                socket={socketRef.current}
+                roomId={roomId}
+                myId={myId}
+                users={users}
+                incomingMessage={incomingCallMessage}
+              />
+            </div>
+
             {/* MAIN ROOM CONTENT GRID (Bento Box Organization) */}
             <div className="grid lg:grid-cols-12 gap-6 items-stretch">
 
@@ -1848,6 +1912,8 @@ export default function App() {
                     </form>
                   </div>
                 </section>
+
+
 
               </div>
 
