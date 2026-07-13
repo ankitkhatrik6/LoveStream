@@ -11,5 +11,8 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    server: {
+      allowedHosts: ['.loca.lt', 'localhost'],
+    },
   };
 });

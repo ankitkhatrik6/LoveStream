@@ -47,6 +47,7 @@ const rooms = new Map<string, Room>();
 const connectedSockets = new Map<string, WebSocket>();
 const socketToRoom = new Map<string, string>();
 const socketToUser = new Map<string, User>();
+const disconnectTimeouts = new Map<string, any>();
 
 // Helper to generate a unique 4-character room code (avoiding confusing chars)
 function generateRoomCode(): string {
@@ -205,6 +206,59 @@ wss.on("connection", (ws) => {
               payload: { message: "Room not found! Check your code and try again." }
             }));
             return;
+          }
+
+          // Check if this is a reconnect of an existing user
+          const existingUserIndex = room.users.findIndex(u => u.username === username);
+          if (existingUserIndex !== -1) {
+            const oldSocketId = room.users[existingUserIndex].id;
+            
+            // Clear any pending disconnect timeout for this user
+            const timeout = disconnectTimeouts.get(oldSocketId);
+            if (timeout) {
+              clearTimeout(timeout);
+              disconnectTimeouts.delete(oldSocketId);
+            }
+            
+            // Clean up old socket references
+            connectedSockets.delete(oldSocketId);
+            socketToRoom.delete(oldSocketId);
+            socketToUser.delete(oldSocketId);
+            
+            // Update user with new socket ID
+            room.users[existingUserIndex].id = socketId;
+            socketToRoom.set(socketId, code);
+            socketToUser.set(socketId, room.users[existingUserIndex]);
+            
+            console.log(`[WS] Reconnecting user ${username} under new socket: ${socketId} (old: ${oldSocketId})`);
+            
+            // Send success room info to reconnector
+            ws.send(JSON.stringify({
+              type: "room_joined",
+              payload: {
+                roomId: code,
+                myId: socketId,
+                users: room.users,
+                currentVideoId: room.currentVideoId,
+                playbackState: room.playbackState,
+                chatHistory: room.chatHistory,
+                loveScore: room.loveScore || 0,
+                isReconnect: true
+              }
+            }));
+            
+            // Broadcast reconnect to the other user
+            broadcastToRoom(code, {
+              type: "user_reconnected",
+              payload: {
+                user: room.users[existingUserIndex],
+                users: room.users,
+                oldSocketId,
+                newSocketId: socketId
+              }
+            }, socketId);
+            
+            break;
           }
           
           if (room.users.length >= 2) {
@@ -520,50 +574,57 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
-    console.log(`[WS] Client disconnected: ${socketId}`);
+    console.log(`[WS] Client disconnected: ${socketId}. Starting 8s grace period.`);
     
-    const roomId = socketToRoom.get(socketId);
-    const user = socketToUser.get(socketId);
-    
-    connectedSockets.delete(socketId);
-    socketToRoom.delete(socketId);
-    socketToUser.delete(socketId);
-    
-    if (roomId && user) {
-      const room = rooms.get(roomId);
-      if (room) {
-        // Remove user from room
-        room.users = room.users.filter((u) => u.id !== socketId);
-        
-        if (room.users.length === 0) {
-          // Room is empty, delete it
-          console.log(`[WS] Room ${roomId} is empty, cleaning up.`);
-          rooms.delete(roomId);
-        } else {
-          // Notify the other user in the room
-          broadcastToRoom(roomId, {
-            type: "user_left",
-            payload: {
-              user,
-              users: room.users,
-            }
-          });
+    const timeout = setTimeout(() => {
+      disconnectTimeouts.delete(socketId);
+      
+      const roomId = socketToRoom.get(socketId);
+      const user = socketToUser.get(socketId);
+      
+      connectedSockets.delete(socketId);
+      socketToRoom.delete(socketId);
+      socketToUser.delete(socketId);
+      
+      if (roomId && user) {
+        const room = rooms.get(roomId);
+        if (room) {
+          // Remove user from room
+          room.users = room.users.filter((u) => u.id !== socketId);
           
-          // Add system message
-          const sysMsg: ChatMessage = {
-            id: `sys-${Date.now()}`,
-            sender: "System 💔",
-            text: `${user.username} has left the room.`,
-            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          };
-          room.chatHistory.push(sysMsg);
-          broadcastToRoom(roomId, {
-            type: "chat_received",
-            payload: sysMsg,
-          });
+          if (room.users.length === 0) {
+            // Room is empty, delete it
+            console.log(`[WS] Grace period expired. Room ${roomId} is empty, cleaning up.`);
+            rooms.delete(roomId);
+          } else {
+            console.log(`[WS] Grace period expired. Removing user ${user.username} (${socketId}) from room ${roomId}.`);
+            // Notify the other user in the room
+            broadcastToRoom(roomId, {
+              type: "user_left",
+              payload: {
+                user,
+                users: room.users,
+              }
+            });
+            
+            // Add system message
+            const sysMsg: ChatMessage = {
+              id: `sys-${Date.now()}`,
+              sender: "System 💔",
+              text: `${user.username} has left the room.`,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            };
+            room.chatHistory.push(sysMsg);
+            broadcastToRoom(roomId, {
+              type: "chat_received",
+              payload: sysMsg,
+            });
+          }
         }
       }
-    }
+    }, 8000);
+    
+    disconnectTimeouts.set(socketId, timeout);
   });
 });
 
@@ -571,7 +632,10 @@ wss.on("connection", (ws) => {
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        allowedHosts: "all",
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);

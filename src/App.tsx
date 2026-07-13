@@ -639,6 +639,18 @@ export default function App() {
             break;
           }
 
+          case "user_reconnected": {
+            const { users: rUsers, user, oldSocketId, newSocketId } = payload;
+            setUsers(rUsers);
+            if (user && user.id) {
+              setIncomingCallMessage({ type: "user_reconnected", payload: { user, users: rUsers, oldSocketId, newSocketId } });
+              if (webrtcListenerRef.current) {
+                webrtcListenerRef.current({ type: "user_reconnected", payload: { user, users: rUsers, oldSocketId, newSocketId } });
+              }
+            }
+            break;
+          }
+
           case "peer_joined_video_call":
           case "peer_left_video_call":
           case "peer_present":
@@ -1368,14 +1380,27 @@ export default function App() {
   };
 
   const handleLeaveRoom = () => {
+    inRoomRef.current = false;
     if (socketRef.current) {
       socketRef.current.close();
+      socketRef.current = null;
+    }
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
     }
     setInRoom(false);
     setRoomId("");
+    roomIdRef.current = "";
     setChatHistory([]);
     setIsPlaying(false);
     setCurrentTime(0);
+    setUsers([]);
+    setMyId("");
+    setLoveScore(0);
+    setLastHeartSender(null);
+    setError("");
+    playerInitializedRef.current = false;
 
     // Clear URL param
     const newUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}`;
@@ -1613,7 +1638,7 @@ export default function App() {
                     <span className="inline-block">
                       Double Sync Lock Active • Watching with{" "}
                       <span className="bg-[#FF2E63] text-white font-sans font-extrabold px-2 py-0.5 border border-black uppercase inline-block">
-                        {users.find((u) => u.id !== socketRef.current?.url)?.username || "Partner"}
+                        {users.find((u) => u.id !== myId)?.username || "Partner"}
                       </span>
                     </span>
                   ) : (

@@ -16,6 +16,101 @@ import {
   VolumeX
 } from "lucide-react";
 
+class CallSoundManager {
+  private audioCtx: AudioContext | null = null;
+  private intervalId: any = null;
+  
+  private initAudio() {
+    if (!this.audioCtx) {
+      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtxClass) {
+        this.audioCtx = new AudioCtxClass();
+      }
+    }
+    if (this.audioCtx && this.audioCtx.state === "suspended") {
+      this.audioCtx.resume();
+    }
+  }
+
+  playOutgoing() {
+    this.stop();
+    this.initAudio();
+    if (!this.audioCtx) return;
+    
+    const playPulse = () => {
+      if (!this.audioCtx) return;
+      const t = this.audioCtx.currentTime;
+      
+      const osc1 = this.audioCtx.createOscillator();
+      const osc2 = this.audioCtx.createOscillator();
+      const gainNode = this.audioCtx.createGain();
+      
+      osc1.frequency.value = 440;
+      osc2.frequency.value = 480;
+      
+      osc1.connect(gainNode);
+      osc2.connect(gainNode);
+      gainNode.connect(this.audioCtx.destination);
+      
+      gainNode.gain.setValueAtTime(0, t);
+      gainNode.gain.linearRampToValueAtTime(0.08, t + 0.05);
+      gainNode.gain.setValueAtTime(0.08, t + 1.5);
+      gainNode.gain.linearRampToValueAtTime(0, t + 1.6);
+      
+      osc1.start(t);
+      osc2.start(t);
+      osc1.stop(t + 1.6);
+      osc2.stop(t + 1.6);
+    };
+    
+    playPulse();
+    this.intervalId = setInterval(playPulse, 4000);
+  }
+
+  playIncoming() {
+    this.stop();
+    this.initAudio();
+    if (!this.audioCtx) return;
+    
+    const playRing = () => {
+      if (!this.audioCtx) return;
+      const t = this.audioCtx.currentTime;
+      
+      const osc = this.audioCtx.createOscillator();
+      const gainNode = this.audioCtx.createGain();
+      
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(600, t);
+      
+      for (let i = 0; i < 12; i++) {
+        osc.frequency.setValueAtTime(600, t + i * 0.1);
+        osc.frequency.setValueAtTime(800, t + i * 0.1 + 0.05);
+      }
+      
+      osc.connect(gainNode);
+      gainNode.connect(this.audioCtx.destination);
+      
+      gainNode.gain.setValueAtTime(0, t);
+      gainNode.gain.linearRampToValueAtTime(0.12, t + 0.05);
+      gainNode.gain.setValueAtTime(0.12, t + 1.2);
+      gainNode.gain.linearRampToValueAtTime(0, t + 1.3);
+      
+      osc.start(t);
+      osc.stop(t + 1.3);
+    };
+    
+    playRing();
+    this.intervalId = setInterval(playRing, 2500);
+  }
+
+  stop() {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+  }
+}
+
 interface User {
   id: string;
   username: string;
@@ -51,6 +146,27 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 
   // Map of socketId -> { stream: MediaStream; username: string }
   const [remoteStreams, setRemoteStreams] = useState<Record<string, { stream: MediaStream; username: string }>>({});
+
+  // Manage calling sounds via CallSoundManager
+  useEffect(() => {
+    const soundManager = new CallSoundManager();
+    try {
+      if (callState === "ringing") {
+        soundManager.playOutgoing();
+      } else if (callState === "invited") {
+        soundManager.playIncoming();
+      } else {
+        soundManager.stop();
+      }
+    } catch (e) {
+      console.warn("CallSoundManager error:", e);
+    }
+    return () => {
+      try {
+        soundManager.stop();
+      } catch (e) {}
+    };
+  }, [callState]);
 
   const localStreamRef = useRef<MediaStream | null>(null);
   const isJoinedRef = useRef(false);
@@ -123,7 +239,36 @@ export const VideoCall: React.FC<VideoCallProps> = ({
   useEffect(() => {
     const handleIncomingMessage = (message: any) => {
       const { type, payload } = message;
-      const { senderId, signal } = payload;
+
+      if (type === "user_reconnected") {
+        const { user, oldSocketId, newSocketId } = payload;
+        if (newSocketId === myId || oldSocketId === myId) return;
+
+        console.log(`[WebRTC Msg] Partner reconnected: oldSocketId=${oldSocketId}, newSocketId=${newSocketId}`);
+
+        if (oldSocketId) {
+          handlePeerDisconnect(oldSocketId);
+        }
+
+        if (isJoinedRef.current && newSocketId && user) {
+          console.log(`[WebRTC Msg] Re-initiating call with reconnected partner at ${newSocketId}`);
+          handlePeerDisconnect(newSocketId);
+
+          if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+              type: "peer_present_response",
+              payload: { targetId: newSocketId }
+            }));
+          }
+
+          if (myId < newSocketId) {
+            initiateCall(newSocketId, user.username);
+          }
+        }
+        return;
+      }
+
+      const { senderId, signal } = payload || {};
 
       // Skip self-messages or invalid sender/receiver state
       if (!myId || !senderId || senderId === myId) return;
@@ -243,6 +388,9 @@ export const VideoCall: React.FC<VideoCallProps> = ({
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream;
+      localVideoRef.current.play().catch((err) => {
+        console.warn("[WebRTC] Local video play blocked:", err);
+      });
     }
   }, [localStream]);
 
@@ -311,15 +459,16 @@ export const VideoCall: React.FC<VideoCallProps> = ({
         let stream: MediaStream;
         
         if (existing && existing.stream) {
-          stream = existing.stream;
+          // Construct a brand-new MediaStream from existing tracks to force a new reference
+          stream = new MediaStream(existing.stream.getTracks());
           // Add track if it's not already in the stream
           if (!stream.getTracks().find(t => t.id === event.track.id)) {
             stream.addTrack(event.track);
           }
         } else {
-          // If the event provides a stream, use it, otherwise construct one
+          // If the event provides a stream, construct a new one from its tracks
           if (event.streams && event.streams[0]) {
-            stream = event.streams[0];
+            stream = new MediaStream(event.streams[0].getTracks());
           } else {
             stream = new MediaStream([event.track]);
           }
@@ -669,6 +818,17 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     };
   }, []);
 
+  // If socket reconnects and we are already in a call, re-announce our presence
+  useEffect(() => {
+    if (isJoined && socket && socket.readyState === WebSocket.OPEN) {
+      console.log("[WebRTC] Socket reconnected while in call, re-sending join_video_call");
+      socket.send(JSON.stringify({
+        type: "join_video_call",
+        payload: {}
+      }));
+    }
+  }, [socket, isJoined]);
+
   const partner = getPartnerUser();
 
   return (
@@ -797,7 +957,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
               RINGING YOUR PARTNER... 💖
             </h4>
             <p className="text-zinc-600 font-sans text-xs max-w-sm mt-1.5 leading-relaxed font-medium">
-              Sending a secure face-to-face invite to <span className="font-bold text-black">{partner?.username || "your partner"}</span>. Please wait for them to accept!
+              Sending a secure invite to <span className="font-bold text-black">{partner?.username || "your partner"}</span>. Waiting for them to accept!
             </p>
             <button
               onClick={handleCancelCall}
@@ -808,45 +968,53 @@ export const VideoCall: React.FC<VideoCallProps> = ({
           </div>
         )}
 
-        {/* 3. INVITED STATE: INCOMING CALL OVERLAY */}
+        {/* 3. INVITED STATE: INCOMING CALL OVERLAY — full-screen modal on all devices */}
         {callState === "invited" && (
-          <div className="flex flex-col items-center justify-center py-8 text-center px-4 border-4 border-[#FF2E63] bg-pink-50 animate-fade-in shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
-            <div className="w-16 h-16 rounded-full border-4 border-black bg-[#00FF66] flex items-center justify-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] mb-4 animate-bounce">
-              <Video className="w-8 h-8 text-black fill-current" />
-            </div>
-            <h4 className="font-display font-black text-lg text-black uppercase tracking-tight">
-              INCOMING VIDEO CALL! 💖
-            </h4>
-            <p className="text-zinc-800 font-sans text-sm max-w-sm mt-1.5 leading-relaxed font-bold">
-              {activeCaller?.name || "Your partner"} wants to start a private video call with you!
-            </p>
-            <div className="flex items-center gap-4 mt-6">
-              <button
-                onClick={handleAcceptCall}
-                className="border-4 border-black bg-[#00FF66] hover:bg-black hover:text-[#00FF66] text-black font-display font-black text-xs uppercase px-6 py-3 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none transition-all cursor-pointer flex items-center gap-2"
-              >
-                <Check className="w-4 h-4 stroke-[3px]" />
-                ACCEPT CALL
-              </button>
-              <button
-                onClick={handleDeclineCall}
-                className="border-4 border-black bg-[#FF2E63] hover:bg-black hover:text-white text-white font-display font-black text-xs uppercase px-6 py-3 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none transition-all cursor-pointer flex items-center gap-2"
-              >
-                <X className="w-4 h-4 stroke-[3px]" />
-                DECLINE
-              </button>
+          <div className="call-overlay-modal">
+            <div className="w-full max-w-sm bg-white border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] animate-fade-in flex flex-col items-center text-center p-6 gap-4 relative">
+              {/* Pulsing ring icon */}
+              <div className="w-20 h-20 rounded-full border-4 border-black bg-[#00FF66] flex items-center justify-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-ring-pulse">
+                <Video className="w-10 h-10 text-black fill-current" />
+              </div>
+
+              <div>
+                <h4 className="font-display font-black text-xl text-black uppercase tracking-tight">
+                  INCOMING CALL! 💖
+                </h4>
+                <p className="text-zinc-700 font-sans text-sm mt-2 leading-relaxed font-semibold">
+                  <span className="font-black text-black">{activeCaller?.name || "Your partner"}</span> wants to video call you!
+                </p>
+              </div>
+
+              {/* Stacked buttons — full width on mobile, always readable */}
+              <div className="flex flex-col w-full gap-3 mt-2">
+                <button
+                  onClick={handleAcceptCall}
+                  className="w-full border-4 border-black bg-[#00FF66] hover:bg-black hover:text-[#00FF66] text-black font-display font-black text-sm uppercase py-4 px-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none transition-all cursor-pointer flex items-center justify-center gap-3"
+                >
+                  <Check className="w-5 h-5 stroke-[3px]" />
+                  ACCEPT CALL
+                </button>
+                <button
+                  onClick={handleDeclineCall}
+                  className="w-full border-4 border-black bg-[#FF2E63] hover:bg-black hover:text-white text-white font-display font-black text-sm uppercase py-4 px-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none transition-all cursor-pointer flex items-center justify-center gap-3"
+                >
+                  <X className="w-5 h-5 stroke-[3px]" />
+                  DECLINE
+                </button>
+              </div>
             </div>
           </div>
         )}
 
         {/* 4. ACTIVE VIDEO CALL SCREEN */}
         {isJoined && (
-          <div className="flex flex-col gap-4 w-full">
-            {/* Grid of stream views (Responsive Layout) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+          <div className="flex flex-col gap-3 w-full">
+            {/* Grid of stream views — 2 cols on all screens, square on mobile */}
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 w-full">
               
               {/* Local Feed preview */}
-              <div className="relative border-4 border-black bg-black aspect-video overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+              <div className="relative border-4 border-black bg-black aspect-video sm:aspect-square overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
                 <video
                   ref={localVideoRef}
                   autoPlay
@@ -856,15 +1024,15 @@ export const VideoCall: React.FC<VideoCallProps> = ({
                 />
                 
                 {/* Visual Label overlay */}
-                <div className="absolute bottom-2 left-2 z-10 bg-white border-2 border-black text-black px-2 py-0.5 font-mono text-[9px] font-black uppercase shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
+                <div className="absolute bottom-1.5 left-1.5 z-10 bg-white border-2 border-black text-black px-1.5 py-0.5 font-mono text-[8px] sm:text-[9px] font-black uppercase shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
                   📷 YOU
                 </div>
 
                 {/* Cam disabled overlay */}
                 {!isCamOn && (
-                  <div className="absolute inset-0 bg-zinc-900 flex flex-col items-center justify-center text-white">
-                    <CameraOff className="w-8 h-8 text-zinc-500 mb-1" />
-                    <span className="font-mono text-[10px] text-zinc-400 font-bold uppercase">Camera Muted</span>
+                  <div className="absolute inset-0 bg-zinc-900 flex flex-col items-center justify-center text-white gap-1">
+                    <CameraOff className="w-6 h-6 sm:w-8 sm:h-8 text-zinc-500" />
+                    <span className="font-mono text-[9px] text-zinc-400 font-bold uppercase">Cam Off</span>
                   </div>
                 )}
               </div>
@@ -872,15 +1040,15 @@ export const VideoCall: React.FC<VideoCallProps> = ({
               {/* Remote Feed preview(s) */}
               {Object.keys(remoteStreams).filter(id => id !== myId).length === 0 ? (
                 /* No partner stream connected yet */
-                <div className="border-4 border-black bg-zinc-200 aspect-video flex flex-col items-center justify-center p-4 text-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] relative select-none animate-pulse">
-                  <div className="animate-bounce mb-2">
-                    <User className="w-8 h-8 text-zinc-400 border-2 border-black p-1 bg-white rounded-none" />
+                <div className="border-4 border-black bg-zinc-200 aspect-video sm:aspect-square flex flex-col items-center justify-center p-2 text-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] relative select-none">
+                  <div className="animate-bounce mb-1">
+                    <User className="w-5 h-5 sm:w-6 sm:h-6 text-zinc-400 border-2 border-black p-1 bg-white rounded-none" />
                   </div>
-                  <h5 className="font-display font-black text-xs text-black uppercase tracking-tight">
-                    CONNECTING MEDIA LINES...
+                  <h5 className="font-display font-black text-[9px] sm:text-[10px] text-black uppercase tracking-tight">
+                    CONNECTING...
                   </h5>
-                  <p className="text-[9px] font-mono text-zinc-500 uppercase mt-0.5">
-                    Establishing private peer tunnel
+                  <p className="text-[7px] sm:text-[8px] font-mono text-zinc-500 uppercase mt-0.5 hidden sm:block">
+                    Establishing Tunnel
                   </p>
                 </div>
               ) : (
@@ -900,37 +1068,40 @@ export const VideoCall: React.FC<VideoCallProps> = ({
               )}
             </div>
 
-            {/* Calling control deck */}
-            <div className="flex items-center justify-center gap-3 border-t-2 border-black pt-4 flex-wrap">
+            {/* Calling control deck — larger touch targets on mobile */}
+            <div className="flex items-center justify-center gap-2 sm:gap-3 border-t-2 border-black pt-3">
               {/* Camera Toggle Button */}
               <button
                 onClick={toggleCam}
-                className={`w-12 h-12 border-3 border-black flex items-center justify-center transition-all cursor-pointer shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none ${
-                  isCamOn ? "bg-[#00FF66] text-black" : "bg-[#FF2E63] text-white"
+                className={`w-14 h-14 sm:w-12 sm:h-12 border-[3px] border-black flex flex-col items-center justify-center transition-all cursor-pointer shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none gap-0.5 ${
+                  isCamOn ? "bg-[#00FF66] text-black" : "bg-zinc-800 text-white"
                 }`}
                 title={isCamOn ? "Mute camera" : "Unmute camera"}
               >
                 {isCamOn ? <Camera className="w-5 h-5" /> : <CameraOff className="w-5 h-5" />}
+                <span className="text-[7px] font-mono font-black uppercase hidden sm:block">{isCamOn ? "CAM" : "OFF"}</span>
               </button>
 
               {/* Microphone Toggle Button */}
               <button
                 onClick={toggleMic}
-                className={`w-12 h-12 border-3 border-black flex items-center justify-center transition-all cursor-pointer shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none ${
-                  isMicOn ? "bg-[#00FF66] text-black" : "bg-[#FF2E63] text-white"
+                className={`w-14 h-14 sm:w-12 sm:h-12 border-[3px] border-black flex flex-col items-center justify-center transition-all cursor-pointer shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none gap-0.5 ${
+                  isMicOn ? "bg-[#00FF66] text-black" : "bg-zinc-800 text-white"
                 }`}
                 title={isMicOn ? "Mute microphone" : "Unmute microphone"}
               >
                 {isMicOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+                <span className="text-[7px] font-mono font-black uppercase hidden sm:block">{isMicOn ? "MIC" : "OFF"}</span>
               </button>
 
               {/* RED End Call / Leave call Button */}
               <button
                 onClick={handleLeaveCall}
-                className="w-12 h-12 border-3 border-black bg-[#FF2E63] hover:bg-black text-white hover:text-[#FF2E63] flex items-center justify-center cursor-pointer transition-all shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none"
+                className="w-14 h-14 sm:w-12 sm:h-12 border-[3px] border-black bg-[#FF2E63] hover:bg-black text-white hover:text-[#FF2E63] flex flex-col items-center justify-center cursor-pointer transition-all shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none gap-0.5"
                 title="End video call"
               >
                 <PhoneOff className="w-5 h-5" />
+                <span className="text-[7px] font-mono font-black uppercase hidden sm:block">END</span>
               </button>
             </div>
           </div>
@@ -959,6 +1130,7 @@ const RemoteVideoFeed: React.FC<RemoteVideoFeedProps> = ({ stream, username }) =
         console.warn(`[WebRTC] Failed to autoplay remote video stream, attempting muted playback:`, err);
         if (remoteVideoRef.current) {
           remoteVideoRef.current.muted = true;
+          setIsMuted(true); // Sync React state so controls match
           remoteVideoRef.current.play().catch(e => console.error("Muted play failed:", e));
         }
       });
@@ -992,7 +1164,7 @@ const RemoteVideoFeed: React.FC<RemoteVideoFeedProps> = ({ stream, username }) =
   };
 
   return (
-    <div className="relative border-4 border-black bg-black aspect-video overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-scale-up">
+    <div className="relative border-4 border-black bg-black aspect-video sm:aspect-square overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-scale-up">
       <video
         ref={remoteVideoRef}
         autoPlay
