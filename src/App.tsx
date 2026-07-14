@@ -1719,10 +1719,26 @@ export default function App() {
 
 
             {/* MAIN ROOM CONTENT GRID (Bento Box Organization) */}
-            <div className="grid lg:grid-cols-12 gap-6 items-stretch">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
 
-              {/* LEFT AREA: PLAYER AND CONTROLS (8/12 cols) */}
-              <div className="lg:col-span-8 flex flex-col gap-6">
+              {/* VIDEO DIALS SECTION - at the top on mobile, in right sidebar column on laptop/desktop */}
+              <div className="col-span-1 lg:col-start-9 lg:col-end-13 lg:row-start-1 lg:row-end-2">
+                <VideoCall
+                  socket={socketRef.current}
+                  roomId={roomId}
+                  myId={myId}
+                  users={users}
+                  onMessageSubscribe={(callback) => {
+                    webrtcListenerRef.current = callback;
+                    return () => {
+                      webrtcListenerRef.current = null;
+                    };
+                  }}
+                />
+              </div>
+
+              {/* LEFT AREA: PLAYER AND CONTROLS */}
+              <div className="col-span-1 lg:col-start-1 lg:col-end-9 lg:row-start-1 lg:row-end-3 flex flex-col gap-6">
 
                 {/* VIDEO PLAYER BENTO BOX */}
                 <section
@@ -1940,23 +1956,8 @@ export default function App() {
 
               </div>
 
-              {/* RIGHT AREA: REAL-TIME CHAT & REACTIONS & VIDEO DIALS (4/12 cols) */}
-              <div className="lg:col-span-4 flex flex-col gap-6">
-
-                <VideoCall
-                  socket={socketRef.current}
-                  roomId={roomId}
-                  myId={myId}
-                  users={users}
-                  onMessageSubscribe={(callback) => {
-                    webrtcListenerRef.current = callback;
-                    return () => {
-                      webrtcListenerRef.current = null;
-                    };
-                  }}
-                />
-
-                <aside className="border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] sm:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] flex flex-col flex-1 h-[580px] lg:h-auto min-h-[400px] relative">
+              {/* RIGHT AREA: REAL-TIME CHAT & REACTIONS */}
+              <aside className="col-span-1 lg:col-start-9 lg:col-end-13 lg:row-start-2 lg:row-end-3 border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] sm:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] flex flex-col h-[580px] lg:h-auto min-h-[400px] relative">
                   {/* Chat Panel Header */}
                   <div className="bg-black text-white p-4 border-b-4 border-black flex justify-between items-center">
                     <h3 className="font-display font-black uppercase tracking-tighter text-md">
@@ -2114,8 +2115,6 @@ export default function App() {
                     />
                   )}
                 </aside>
-
-              </div>
 
             </div>
 
