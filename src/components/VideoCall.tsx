@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { 
   Camera, 
   CameraOff, 
@@ -11,9 +12,7 @@ import {
   Sparkles,
   Video,
   Check,
-  X,
-  Volume2,
-  VolumeX
+  X
 } from "lucide-react";
 
 class CallSoundManager {
@@ -861,7 +860,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       </div>
 
       {/* Main Call Viewport */}
-      <div className="p-4 bg-zinc-50 flex flex-col gap-4 min-h-[220px]">
+      <div className="p-2.5 sm:p-4 bg-zinc-50 flex flex-col gap-3 sm:gap-4 min-h-[220px]">
         {partnerEndedCall && !isJoined && (
           <div className="border-4 border-black bg-[#FFEFEF] p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] text-black mb-1 relative animate-fade-in">
             <button
@@ -969,52 +968,53 @@ export const VideoCall: React.FC<VideoCallProps> = ({
         )}
 
         {/* 3. INVITED STATE: INCOMING CALL OVERLAY — full-screen modal on all devices */}
-        {callState === "invited" && (
+        {callState === "invited" && createPortal(
           <div className="call-overlay-modal">
-            <div className="w-full max-w-sm bg-white border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] animate-fade-in flex flex-col items-center text-center p-6 gap-4 relative">
+            <div className="w-full max-w-sm bg-white border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] animate-fade-in flex flex-col items-center text-center p-5 sm:p-6 gap-3 sm:gap-4 relative mx-4">
               {/* Pulsing ring icon */}
-              <div className="w-20 h-20 rounded-full border-4 border-black bg-[#00FF66] flex items-center justify-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-ring-pulse">
-                <Video className="w-10 h-10 text-black fill-current" />
+              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-4 border-black bg-[#00FF66] flex items-center justify-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-ring-pulse shrink-0">
+                <Video className="w-8 h-8 sm:w-10 sm:h-10 text-black fill-current" />
               </div>
 
               <div>
-                <h4 className="font-display font-black text-xl text-black uppercase tracking-tight">
+                <h4 className="font-display font-black text-lg sm:text-xl text-black uppercase tracking-tight">
                   INCOMING CALL! 💖
                 </h4>
-                <p className="text-zinc-700 font-sans text-sm mt-2 leading-relaxed font-semibold">
+                <p className="text-zinc-700 font-sans text-xs sm:text-sm mt-1.5 leading-relaxed font-semibold">
                   <span className="font-black text-black">{activeCaller?.name || "Your partner"}</span> wants to video call you!
                 </p>
               </div>
 
-              {/* Stacked buttons — full width on mobile, always readable */}
-              <div className="flex flex-col w-full gap-3 mt-2">
+              {/* Side-by-side compact buttons for better responsiveness */}
+              <div className="flex gap-3 w-full mt-2">
                 <button
                   onClick={handleAcceptCall}
-                  className="w-full border-4 border-black bg-[#00FF66] hover:bg-black hover:text-[#00FF66] text-black font-display font-black text-sm uppercase py-4 px-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none transition-all cursor-pointer flex items-center justify-center gap-3"
+                  className="flex-1 border-4 border-black bg-[#00FF66] hover:bg-black hover:text-[#00FF66] text-black font-display font-black text-xs sm:text-sm uppercase py-3 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none transition-all cursor-pointer flex items-center justify-center gap-1.5"
                 >
-                  <Check className="w-5 h-5 stroke-[3px]" />
-                  ACCEPT CALL
+                  <Check className="w-4 h-4 stroke-[3px]" />
+                  ACCEPT
                 </button>
                 <button
                   onClick={handleDeclineCall}
-                  className="w-full border-4 border-black bg-[#FF2E63] hover:bg-black hover:text-white text-white font-display font-black text-sm uppercase py-4 px-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none transition-all cursor-pointer flex items-center justify-center gap-3"
+                  className="flex-1 border-4 border-black bg-[#FF2E63] hover:bg-black hover:text-white text-white font-display font-black text-xs sm:text-sm uppercase py-3 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none transition-all cursor-pointer flex items-center justify-center gap-1.5"
                 >
-                  <X className="w-5 h-5 stroke-[3px]" />
+                  <X className="w-4 h-4 stroke-[3px]" />
                   DECLINE
                 </button>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         )}
 
         {/* 4. ACTIVE VIDEO CALL SCREEN */}
         {isJoined && (
           <div className="flex flex-col gap-3 w-full">
             {/* Grid of stream views — 2 cols on all screens, square on mobile */}
-            <div className="grid grid-cols-2 gap-2 sm:gap-3 w-full">
+            <div className="grid grid-cols-2 gap-1.5 sm:gap-3 w-full">
               
               {/* Local Feed preview */}
-              <div className="relative border-4 border-black bg-black aspect-video sm:aspect-square overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+              <div className="relative border-4 border-black bg-black aspect-square overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
                 <video
                   ref={localVideoRef}
                   autoPlay
@@ -1022,11 +1022,6 @@ export const VideoCall: React.FC<VideoCallProps> = ({
                   muted
                   className="w-full h-full object-cover scale-x-[-1]"
                 />
-                
-                {/* Visual Label overlay */}
-                <div className="absolute bottom-1.5 left-1.5 z-10 bg-white border-2 border-black text-black px-1.5 py-0.5 font-mono text-[8px] sm:text-[9px] font-black uppercase shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                  📷 YOU
-                </div>
 
                 {/* Cam disabled overlay */}
                 {!isCamOn && (
@@ -1040,7 +1035,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
               {/* Remote Feed preview(s) */}
               {Object.keys(remoteStreams).filter(id => id !== myId).length === 0 ? (
                 /* No partner stream connected yet */
-                <div className="border-4 border-black bg-zinc-200 aspect-video sm:aspect-square flex flex-col items-center justify-center p-2 text-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] relative select-none">
+                <div className="border-4 border-black bg-zinc-200 aspect-square flex flex-col items-center justify-center p-2 text-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] relative select-none">
                   <div className="animate-bounce mb-1">
                     <User className="w-5 h-5 sm:w-6 sm:h-6 text-zinc-400 border-2 border-black p-1 bg-white rounded-none" />
                   </div>
@@ -1056,12 +1051,11 @@ export const VideoCall: React.FC<VideoCallProps> = ({
                 Object.keys(remoteStreams)
                   .filter((peerId) => peerId !== myId)
                   .map((peerId) => {
-                    const { stream, username } = remoteStreams[peerId];
+                    const { stream } = remoteStreams[peerId];
                     return (
                       <RemoteVideoFeed
                         key={peerId}
                         stream={stream}
-                        username={username}
                       />
                     );
                   })
@@ -1114,14 +1108,10 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 /* Remote feed helper component for mounting video streams dynamically */
 interface RemoteVideoFeedProps {
   stream: MediaStream;
-  username: string;
 }
 
-const RemoteVideoFeed: React.FC<RemoteVideoFeedProps> = ({ stream, username }) => {
+const RemoteVideoFeed: React.FC<RemoteVideoFeedProps> = ({ stream }) => {
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  const [volume, setVolume] = useState<number>(0.8);
-  const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [prevVolume, setPrevVolume] = useState<number>(0.8);
 
   useEffect(() => {
     if (remoteVideoRef.current && stream) {
@@ -1130,75 +1120,20 @@ const RemoteVideoFeed: React.FC<RemoteVideoFeedProps> = ({ stream, username }) =
         console.warn(`[WebRTC] Failed to autoplay remote video stream, attempting muted playback:`, err);
         if (remoteVideoRef.current) {
           remoteVideoRef.current.muted = true;
-          setIsMuted(true); // Sync React state so controls match
           remoteVideoRef.current.play().catch(e => console.error("Muted play failed:", e));
         }
       });
     }
   }, [stream]);
 
-  useEffect(() => {
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.volume = isMuted ? 0 : volume;
-    }
-  }, [volume, isMuted]);
-
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseFloat(e.target.value);
-    setVolume(val);
-    if (val > 0) {
-      setIsMuted(false);
-    } else {
-      setIsMuted(true);
-    }
-  };
-
-  const toggleMute = () => {
-    if (isMuted) {
-      setIsMuted(false);
-      setVolume(prevVolume > 0 ? prevVolume : 0.8);
-    } else {
-      setPrevVolume(volume);
-      setIsMuted(true);
-    }
-  };
-
   return (
-    <div className="relative border-4 border-black bg-black aspect-video sm:aspect-square overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-scale-up">
+    <div className="relative border-4 border-black bg-black aspect-square overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-scale-up">
       <video
         ref={remoteVideoRef}
         autoPlay
         playsInline
         className="w-full h-full object-cover"
       />
-      <div className="absolute bottom-2 left-2 z-10 bg-white border-2 border-black text-black px-2 py-0.5 font-mono text-[9px] font-black uppercase shadow-[2px_2px_0px_0px_rgba(255,255,255,1)]">
-        🎥 {username}
-      </div>
-
-      {/* Volume control overlay */}
-      <div className="absolute bottom-2 right-2 z-10 flex items-center gap-1.5 bg-white border-2 border-black p-1 shadow-[2px_2px_0px_0px_rgba(255,255,255,1)]">
-        <button
-          onClick={toggleMute}
-          className="text-black hover:text-[#FF2E63] focus:outline-none cursor-pointer p-0.5"
-          title={isMuted ? "Unmute partner" : "Mute partner"}
-        >
-          {isMuted || volume === 0 ? (
-            <VolumeX className="w-3.5 h-3.5" />
-          ) : (
-            <Volume2 className="w-3.5 h-3.5" />
-          )}
-        </button>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.05"
-          value={isMuted ? 0 : volume}
-          onChange={handleVolumeChange}
-          className="w-12 h-1.5 accent-black bg-zinc-200 rounded-lg appearance-none cursor-pointer hover:accent-[#FF2E63] transition-all"
-          style={{ verticalAlign: "middle" }}
-        />
-      </div>
     </div>
   );
 };
