@@ -1719,7 +1719,7 @@ export default function App() {
 
 
             {/* MAIN ROOM CONTENT GRID (Bento Box Organization) */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+            <div className="grid grid-cols-1 lg:grid-cols-12 lg:grid-rows-[auto_minmax(0,1fr)] gap-6 items-stretch">
 
               {/* VIDEO DIALS SECTION - at the top on mobile, in right sidebar column on laptop/desktop */}
               <div className="col-span-1 lg:col-start-9 lg:col-end-13 lg:row-start-1 lg:row-end-2">
@@ -1957,7 +1957,7 @@ export default function App() {
               </div>
 
               {/* RIGHT AREA: REAL-TIME CHAT & REACTIONS */}
-              <aside className="col-span-1 lg:col-start-9 lg:col-end-13 lg:row-start-2 lg:row-end-3 border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] sm:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] flex flex-col h-[580px] lg:h-auto min-h-[400px] relative">
+              <aside className="col-span-1 lg:col-start-9 lg:col-end-13 lg:row-start-2 lg:row-end-3 border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] sm:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] flex flex-col h-[580px] lg:h-full min-h-[400px] relative overflow-hidden">
                   {/* Chat Panel Header */}
                   <div className="bg-black text-white p-4 border-b-4 border-black flex justify-between items-center">
                     <h3 className="font-display font-black uppercase tracking-tighter text-md">
