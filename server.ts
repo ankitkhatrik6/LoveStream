@@ -603,6 +603,7 @@ wss.on("connection", (ws) => {
               type: "user_left",
               payload: {
                 user,
+                senderId: socketId, // VideoCall.tsx checks payload.senderId to identify disconnected peer
                 users: room.users,
               }
             });

@@ -145,6 +145,8 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 
   // Map of socketId -> { stream: MediaStream; username: string }
   const [remoteStreams, setRemoteStreams] = useState<Record<string, { stream: MediaStream; username: string }>>({});
+  // Map of socketId -> ICE connection state string for UI
+  const [peerStatus, setPeerStatus] = useState<Record<string, string>>({});
 
   // Manage calling sounds via CallSoundManager
   useEffect(() => {
@@ -173,6 +175,8 @@ export const VideoCall: React.FC<VideoCallProps> = ({
   const peerConnections = useRef<Record<string, RTCPeerConnection>>({});
   // Map of socketId -> RTCIceCandidateInit[] for candidates received before remote description is set
   const pendingCandidates = useRef<Record<string, RTCIceCandidateInit[]>>({});
+  // Track ICE restart attempts per peer to prevent infinite loops
+  const iceRestartAttempts = useRef<Record<string, number>>({});
   
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -200,8 +204,14 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     }
 
     delete pendingCandidates.current[peerId];
+    delete iceRestartAttempts.current[peerId];
 
     setRemoteStreams((prev) => {
+      const copy = { ...prev };
+      delete copy[peerId];
+      return copy;
+    });
+    setPeerStatus((prev) => {
       const copy = { ...prev };
       delete copy[peerId];
       return copy;
@@ -305,7 +315,17 @@ export const VideoCall: React.FC<VideoCallProps> = ({
         if (signal.type === "call_accept") {
           console.log(`[WebRTC Call] Partner ${senderName} accepted our invite! Connecting...`);
           setError("");
-          handleJoinCall();
+          // Join call first, then notify the accepter we're present
+          // This fixes the timing race where accepter's peer_joined_video_call
+          // may arrive before we set isJoinedRef.current = true
+          handleJoinCall().then(() => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({
+                type: "peer_present_response",
+                payload: { targetId: senderId }
+              }));
+            }
+          });
           return;
         }
       }
@@ -393,7 +413,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     }
   }, [localStream]);
 
-  // Create peer connection with standard Google STUN servers
+  // Create peer connection with STUN + TURN relay servers for cross-network support
   const createPeerConnection = (peerId: string, peerName: string, isInitiator: boolean) => {
     // Double safeguard to never connect to ourselves
     if (!peerId || !myId || peerId === myId) {
@@ -407,11 +427,37 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     console.log(`[WebRTC] Creating RTCPeerConnection for peer ${peerId}, isInitiator: ${isInitiator}`);
     const pc = new RTCPeerConnection({
       iceServers: [
+        // Google STUN — works for direct/same-network connections
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
-        { urls: "stun:stun2.l.google.com:19302" }
-      ]
+        // Open Relay TURN servers — required for different-network (mobile vs WiFi) connections
+        // These relay media when direct P2P is blocked by NAT/firewall
+        {
+          urls: "turn:openrelay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        },
+        {
+          urls: "turn:openrelay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        },
+        {
+          urls: "turn:openrelay.metered.ca:443?transport=tcp",
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        },
+        {
+          urls: "turns:openrelay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        }
+      ],
+      iceCandidatePoolSize: 10,
+      bundlePolicy: "max-bundle"
     });
+
+    iceRestartAttempts.current[peerId] = 0;
 
     // Handle ICE Candidates
     pc.onicecandidate = (event) => {
@@ -431,21 +477,58 @@ export const VideoCall: React.FC<VideoCallProps> = ({
             }
           }
         }));
+      } else if (!event.candidate) {
+        console.log(`[WebRTC] ICE gathering complete for peer ${peerName}`);
       }
     };
 
     // Connection changes
     pc.onconnectionstatechange = () => {
-      console.log(`[WebRTC] Connection state for ${peerName}: ${pc.connectionState}`);
-      if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-        handlePeerDisconnect(peerId);
+      const state = pc.connectionState;
+      console.log(`[WebRTC] Connection state for ${peerName}: ${state}`);
+      setPeerStatus(prev => ({ ...prev, [peerId]: state }));
+      if (state === "failed") {
+        // Try ICE restart before giving up
+        const attempts = iceRestartAttempts.current[peerId] || 0;
+        if (attempts < 2 && isInitiator) {
+          iceRestartAttempts.current[peerId] = attempts + 1;
+          console.log(`[WebRTC] Connection failed, attempting ICE restart #${attempts + 1} for ${peerName}`);
+          restartIce(peerId, peerName);
+        } else {
+          console.log(`[WebRTC] Connection permanently failed for ${peerName}, disconnecting.`);
+          handlePeerDisconnect(peerId);
+        }
+      } else if (state === "disconnected") {
+        // Disconnected is recoverable — wait briefly before acting
+        console.log(`[WebRTC] Connection temporarily disconnected for ${peerName}, waiting...`);
+        setTimeout(() => {
+          if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+            const attempts = iceRestartAttempts.current[peerId] || 0;
+            if (attempts < 2 && isInitiator) {
+              iceRestartAttempts.current[peerId] = attempts + 1;
+              console.log(`[WebRTC] Still disconnected after wait, ICE restart #${attempts + 1} for ${peerName}`);
+              restartIce(peerId, peerName);
+            } else {
+              handlePeerDisconnect(peerId);
+            }
+          }
+        }, 4000);
       }
     };
 
     pc.oniceconnectionstatechange = () => {
-      console.log(`[WebRTC] ICE Connection state for ${peerName}: ${pc.iceConnectionState}`);
-      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected") {
-        handlePeerDisconnect(peerId);
+      const state = pc.iceConnectionState;
+      console.log(`[WebRTC] ICE Connection state for ${peerName}: ${state}`);
+      setPeerStatus(prev => ({ ...prev, [peerId]: state }));
+      if (state === "failed") {
+        const attempts = iceRestartAttempts.current[peerId] || 0;
+        if (attempts < 2 && isInitiator) {
+          iceRestartAttempts.current[peerId] = attempts + 1;
+          console.log(`[WebRTC] ICE failed, restarting #${attempts + 1} for ${peerName}`);
+          restartIce(peerId, peerName);
+        } else {
+          handlePeerDisconnect(peerId);
+        }
       }
     };
 
@@ -493,6 +576,33 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 
     peerConnections.current[peerId] = pc;
     return pc;
+  };
+
+  // ICE Restart — re-negotiate the connection without full teardown
+  const restartIce = async (peerId: string, peerName: string) => {
+    try {
+      const pc = peerConnections.current[peerId];
+      if (!pc) return;
+      if (pc.signalingState !== "stable") {
+        console.warn(`[WebRTC] Cannot ICE restart, signaling state is ${pc.signalingState}`);
+        return;
+      }
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({
+          type: "webrtc_signal",
+          payload: {
+            targetId: peerId,
+            signal: { type: "offer", sdp: offer.sdp }
+          }
+        }));
+      }
+      console.log(`[WebRTC] ICE restart offer sent to ${peerName}`);
+    } catch (err) {
+      console.error(`[WebRTC] ICE restart failed for ${peerName}:`, err);
+      handlePeerDisconnect(peerId);
+    }
   };
 
   // SDP Negotiation - Offer creation
@@ -770,6 +880,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       // Handled in startLocalMedia
       isJoinedRef.current = false;
       setCallState("idle");
+      throw err; // Re-throw so callers (e.g. call_accept handler) can chain .then()
     }
   };
 
@@ -1034,7 +1145,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 
               {/* Remote Feed preview(s) */}
               {Object.keys(remoteStreams).filter(id => id !== myId).length === 0 ? (
-                /* No partner stream connected yet */
+                /* No partner stream connected yet — show detailed status */
                 <div className="border-4 border-black bg-zinc-200 aspect-square flex flex-col items-center justify-center p-2 text-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] relative select-none">
                   <div className="animate-bounce mb-1">
                     <User className="w-5 h-5 sm:w-6 sm:h-6 text-zinc-400 border-2 border-black p-1 bg-white rounded-none" />
@@ -1042,9 +1153,17 @@ export const VideoCall: React.FC<VideoCallProps> = ({
                   <h5 className="font-display font-black text-[9px] sm:text-[10px] text-black uppercase tracking-tight">
                     CONNECTING...
                   </h5>
-                  <p className="text-[7px] sm:text-[8px] font-mono text-zinc-500 uppercase mt-0.5 hidden sm:block">
-                    Establishing Tunnel
-                  </p>
+                  {(() => {
+                    const statuses = Object.values(peerStatus);
+                    const status = statuses[0];
+                    const isRelaying = status === "connected" || status === "completed";
+                    const isFailed = status === "failed";
+                    return (
+                      <p className="text-[7px] sm:text-[8px] font-mono uppercase mt-0.5 font-bold" style={{ color: isFailed ? '#FF2E63' : isRelaying ? '#00FF66' : '#a1a1aa' }}>
+                        {isFailed ? 'ICE FAILED — RETRYING' : status ? status.toUpperCase() : 'Establishing Tunnel'}
+                      </p>
+                    );
+                  })()}
                 </div>
               ) : (
                 /* Map active remote participant streams, strictly excluding self */
@@ -1052,10 +1171,12 @@ export const VideoCall: React.FC<VideoCallProps> = ({
                   .filter((peerId) => peerId !== myId)
                   .map((peerId) => {
                     const { stream } = remoteStreams[peerId];
+                    const connStatus = peerStatus[peerId];
                     return (
                       <RemoteVideoFeed
                         key={peerId}
                         stream={stream}
+                        connStatus={connStatus}
                       />
                     );
                   })
@@ -1108,13 +1229,16 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 /* Remote feed helper component for mounting video streams dynamically */
 interface RemoteVideoFeedProps {
   stream: MediaStream;
+  connStatus?: string;
 }
 
-const RemoteVideoFeed: React.FC<RemoteVideoFeedProps> = ({ stream }) => {
+const RemoteVideoFeed: React.FC<RemoteVideoFeedProps> = ({ stream, connStatus }) => {
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     if (remoteVideoRef.current && stream) {
+      // Always assign a fresh srcObject reference to force re-render
+      remoteVideoRef.current.srcObject = null;
       remoteVideoRef.current.srcObject = stream;
       remoteVideoRef.current.play().catch((err) => {
         console.warn(`[WebRTC] Failed to autoplay remote video stream, attempting muted playback:`, err);
@@ -1126,6 +1250,8 @@ const RemoteVideoFeed: React.FC<RemoteVideoFeedProps> = ({ stream }) => {
     }
   }, [stream]);
 
+  const isRelaying = connStatus === "connected" || connStatus === "completed";
+
   return (
     <div className="relative border-4 border-black bg-black aspect-square overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-scale-up">
       <video
@@ -1134,6 +1260,18 @@ const RemoteVideoFeed: React.FC<RemoteVideoFeedProps> = ({ stream }) => {
         playsInline
         className="w-full h-full object-cover"
       />
+      {/* Connection quality indicator */}
+      {connStatus && (
+        <div
+          className="absolute top-1 right-1 font-mono font-black text-[7px] uppercase px-1.5 py-0.5 border border-black"
+          style={{
+            background: isRelaying ? '#00FF66' : '#facc15',
+            color: '#000'
+          }}
+        >
+          {isRelaying ? 'LIVE' : connStatus.toUpperCase()}
+        </div>
+      )}
     </div>
   );
 };
