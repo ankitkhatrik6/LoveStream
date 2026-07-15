@@ -1957,7 +1957,7 @@ export default function App() {
               </div>
 
               {/* RIGHT AREA: REAL-TIME CHAT & REACTIONS */}
-              <aside className="col-span-1 lg:col-start-9 lg:col-end-13 lg:row-start-2 lg:row-end-3 border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] sm:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] flex flex-col h-[580px] lg:h-full min-h-[400px] relative overflow-hidden">
+              <aside className="col-span-1 lg:col-start-9 lg:col-end-13 lg:row-start-2 lg:row-end-3 border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] sm:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] flex flex-col h-[580px] lg:h-[650px] min-h-[400px] relative overflow-hidden">
                   {/* Chat Panel Header */}
                   <div className="bg-black text-white p-4 border-b-4 border-black flex justify-between items-center">
                     <h3 className="font-display font-black uppercase tracking-tighter text-md">
