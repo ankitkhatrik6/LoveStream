@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <url>
+    <loc>https://love-stream.onrender.com/</loc>
+    <lastmod>2026-07-17</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://love-stream.onrender.com/og-image.jpg</image:loc>
+      <image:title>LoveStream – Watch YouTube Together in Real Time</image:title>
+      <image:caption>Watch YouTube videos in perfect sync with your partner or friends. Private rooms, live chat, emoji reactions.</image:caption>
+    </image:image>
+  </url>
+</urlset>

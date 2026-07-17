@@ -642,8 +642,29 @@ async function startServer() {
     app.use(vite.middlewares);
     console.log("[Vite] Running in development mode with Vite middleware.");
   } else {
+    // In bundled CJS output, __dirname = dist/. Go up one level if needed.
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+
+    // Serve static files with proper caching for social media crawlers
+    app.use(
+      express.static(distPath, {
+        maxAge: "1h",
+        setHeaders: (res, filePath) => {
+          // Set long cache + proper content-type for OG images
+          if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg")) {
+            res.setHeader("Content-Type", "image/jpeg");
+            res.setHeader("Cache-Control", "public, max-age=86400"); // 24h
+          } else if (filePath.endsWith(".png")) {
+            res.setHeader("Content-Type", "image/png");
+            res.setHeader("Cache-Control", "public, max-age=86400");
+          } else if (filePath.endsWith(".xml")) {
+            res.setHeader("Content-Type", "application/xml");
+          }
+        },
+      })
+    );
+
+    // SPA catch-all: serve index.html for all non-file routes
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
