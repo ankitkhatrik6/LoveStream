@@ -1,0 +1,17 @@
+name: Keep Render App Alive
+
+on:
+  schedule:
+    # Run every 10 minutes to prevent Render from spinning down the free instance
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping LoveStream
+        run: curl -sSf https://love-stream.onrender.com/ > /dev/null
+        # -s: silent
+        # -S: show error
+        # -f: fail fast
