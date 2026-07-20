@@ -723,10 +723,10 @@ export default function App() {
             setLoveScore(newScore);
             setLastHeartSender(senderName);
             // Spawn 6 beautifully animated flying heart emojis!
-            for (let i = 0; i < 6; i++) {
+            for (let i = 0; i < 3; i++) {
               setTimeout(() => {
                 triggerFlyingEmoji("❤️");
-              }, i * 150 + Math.random() * 100);
+              }, i * 300 + Math.random() * 100);
             }
             break;
           }
