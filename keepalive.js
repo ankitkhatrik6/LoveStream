@@ -1,7 +1,7 @@
 import https from 'https';
 import http from 'http';
 
-const url = 'https://love-stream.onrender.com/';
+const url = 'https://lovestream.ankitak.com.np/';
 
 // Ping every 10 minutes (600,000 milliseconds)
 setInterval(() => {

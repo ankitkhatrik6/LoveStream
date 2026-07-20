@@ -2122,7 +2122,7 @@ export default function App() {
             <footer className="flex flex-col sm:flex-row justify-between items-center text-[10px] font-mono font-bold uppercase tracking-widest text-black/80 border-t-2 border-black/25 pt-4">
               <div className="flex flex-wrap gap-4 sm:gap-8 justify-center sm:justify-start">
                 <span>Status: Sync Lock Active</span>
-                <span>Watch Link: love-stream.onrender.com/{roomId || "xxxx"}</span>
+                <span>Watch Link: lovestream.ankitak.com.np/{roomId || "xxxx"}</span>
                 <span>Secure socket tunnel: 100% encrypted</span>
               </div>
               <div className="bg-black text-white px-4 py-1 border-2 border-black shadow-[4px_4px_0px_0px_rgba(255,255,255,1)] mt-2 sm:mt-0">

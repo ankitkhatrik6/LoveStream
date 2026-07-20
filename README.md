@@ -87,7 +87,7 @@ npm start
 
 ## How to Use It
 
-1. Go to [love-stream.onrender.com](https://love-stream.onrender.com) or run it locally.
+1. Go to [lovestream.ankitak.com.np](https://lovestream.ankitak.com.np) or run it locally.
 2. Enter your nickname and click **Create Room**. You'll get a 4-character room code.
 3. Share that code (or the invite link) with whoever you're watching with.
 4. They enter the code, hit **Join Room**, and you're both connected.
@@ -102,7 +102,7 @@ npm start
 
 I deployed LoveStream on **Render**. The `render.yaml` in the repo has the full configuration. The same Node.js server handles both the WebSocket signaling and serves the built frontend, so it's a single service deployment.
 
-Live at: [love-stream.onrender.com](https://love-stream.onrender.com)
+Live at: [lovestream.ankitak.com.np](https://lovestream.ankitak.com.np)
 
 ---
 
