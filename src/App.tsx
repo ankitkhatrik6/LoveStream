@@ -252,10 +252,10 @@ export default function App() {
   // App navigation state
   const [inRoom, setInRoom] = useState(false);
   const [roomId, setRoomId] = useState("");
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState(() => sessionStorage.getItem("lovestream_username") || "");
   const [joinCode, setJoinCode] = useState("");
   const [error, setError] = useState("");
-  const usernameRef = useRef("");
+  const usernameRef = useRef(username);
 
   // Room stream state
   const [users, setUsers] = useState<User[]>([]);
@@ -503,12 +503,18 @@ export default function App() {
     }
   };
 
-  // Detect room code from URL params (for easy sharing)
+  // Detect room code from URL params (for easy sharing) and auto-join if username is saved
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get("room");
     if (roomParam) {
       setJoinCode(roomParam.toUpperCase());
+      const savedUsername = sessionStorage.getItem("lovestream_username");
+      if (savedUsername) {
+        setUsername(savedUsername);
+        usernameRef.current = savedUsername;
+        connectToWebSocket("join_room", roomParam.toUpperCase());
+      }
     }
   }, []);
 
@@ -580,6 +586,8 @@ export default function App() {
             setHasInteracted(true);
             setInRoom(true);
             inRoomRef.current = true;
+            sessionStorage.setItem("lovestream_username", usernameRef.current);
+            sessionStorage.setItem("lovestream_room", rId);
 
             // On a silent reconnect, preserve chat history and don't re-push URL
             if (!isReconnect) {
@@ -1401,6 +1409,9 @@ export default function App() {
     setLastHeartSender(null);
     setError("");
     playerInitializedRef.current = false;
+    
+    sessionStorage.removeItem("lovestream_username");
+    sessionStorage.removeItem("lovestream_room");
 
     // Clear URL param
     const newUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}`;
