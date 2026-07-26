@@ -1,7 +1,7 @@
 {
   "name": "lovestream-sync",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Private synchronized video watch parties with real-time duplex sync chat.",
   "type": "module",
   "scripts": {
