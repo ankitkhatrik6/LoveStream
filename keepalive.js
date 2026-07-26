@@ -6,7 +6,12 @@ const url = 'https://lovestream.ankitak.com.np/';
 // Ping every 10 minutes (600,000 milliseconds)
 setInterval(() => {
   const req = url.startsWith('https') ? https : http;
-  req.get(url, (res) => {
+  const options = {
+    headers: {
+      'User-Agent': 'LoveStream-KeepAlive/1.0'
+    }
+  };
+  req.get(url, options, (res) => {
     console.log(`Keep-alive ping sent to ${url}. Status code: ${res.statusCode}`);
   }).on('error', (err) => {
     console.error(`Keep-alive ping failed: ${err.message}`);
