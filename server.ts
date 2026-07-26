@@ -653,10 +653,10 @@ async function startServer() {
           // Set long cache + proper content-type for OG images
           if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg")) {
             res.setHeader("Content-Type", "image/jpeg");
-            res.setHeader("Cache-Control", "public, max-age=86400"); // 24h
+            res.setHeader("Cache-Control", "public, max-age=604800"); // 7d
           } else if (filePath.endsWith(".png")) {
             res.setHeader("Content-Type", "image/png");
-            res.setHeader("Cache-Control", "public, max-age=86400");
+            res.setHeader("Cache-Control", "public, max-age=604800");
           } else if (filePath.endsWith(".xml")) {
             res.setHeader("Content-Type", "application/xml");
           }
