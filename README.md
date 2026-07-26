@@ -34,7 +34,7 @@ Beyond video sync, I added real-time chat with emoji reactions, typing indicator
 
 - **P2P Video Calls:** I integrated WebRTC directly so both people can video call without any third-party server touching their video feed. The WebSocket connection I already had doubles as the signaling channel, so no extra infrastructure needed.
 
-- **Auto-Reconnect:** Sockets drop sometimes. I wrote reconnection logic on both the client and server so if someone briefly loses connection, the session recovers without them having to rejoin manually.
+- **Auto-Reconnect:** Sockets drop sometimes. I wrote reconnection logic on both the client and server so if someone briefly loses connection, the session recovers without them having to rejoin manually. Additionally, refreshing or reloading the page preserves the room state and automatically reconnects the user to the active room without sending them back to the homepage.
 
 - **Autoplay Handling:** Browsers block autoplay with sound by default. I handle this gracefully by starting the video muted if needed and showing a clear unmute prompt so the experience doesn't feel broken.
 
