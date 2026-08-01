@@ -132,8 +132,8 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 }) => {
   const [isJoined, setIsJoined] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [isCamOn, setIsCamOn] = useState(false); // Muted by default
-  const [isMicOn, setIsMicOn] = useState(false); // Muted by default
+  const [isCamOn, setIsCamOn] = useState(true); // Camera ON by default
+  const [isMicOn, setIsMicOn] = useState(true); // Mic ON by default
   const [error, setError] = useState<string>("");
   const [isInitializing, setIsInitializing] = useState(false);
 
@@ -760,20 +760,10 @@ export const VideoCall: React.FC<VideoCallProps> = ({
         }
       });
       
-      // Mute both camera and mic tracks by default, as requested
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = false;
-      }
-      const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = false;
-      }
-
       localStreamRef.current = stream;
       setLocalStream(stream);
-      setIsCamOn(false); // UI state off by default
-      setIsMicOn(false); // UI state off by default
+      setIsCamOn(true); // UI state ON by default
+      setIsMicOn(true); // UI state ON by default
       setIsInitializing(false);
       return stream;
     } catch (err: any) {
@@ -1038,7 +1028,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
               See each other while watching!
             </h4>
             <p className="text-zinc-600 font-sans text-xs max-w-sm mt-1.5 leading-relaxed font-medium">
-              Start a private, secure peer-to-peer video connection with your partner. Keep camera and mic muted by default for safe watching.
+              Start a private, secure peer-to-peer video connection with your partner. Your camera and microphone will be enabled when you join.
             </p>
 
             <button
