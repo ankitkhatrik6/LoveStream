@@ -132,8 +132,8 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 }) => {
   const [isJoined, setIsJoined] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [isCamOn, setIsCamOn] = useState(true); // Camera ON by default
-  const [isMicOn, setIsMicOn] = useState(true); // Mic ON by default
+  const [isCamOn, setIsCamOn] = useState(false); // Muted by default
+  const [isMicOn, setIsMicOn] = useState(false); // Muted by default
   const [error, setError] = useState<string>("");
   const [isInitializing, setIsInitializing] = useState(false);
 
@@ -438,24 +438,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
         { urls: "stun:stun3.l.google.com:19302" },
         { urls: "stun:stun4.l.google.com:19302" },
         // Additional reliable public STUN
-        { urls: "stun:global.stun.twilio.com:3478" },
-        // Open Relay TURN servers — required for different-network (mobile vs WiFi) connections
-        // These relay media when direct P2P is blocked by NAT/firewall
-        {
-          urls: "turn:openrelay.metered.ca:80",
-          username: "openrelayproject",
-          credential: "openrelayproject"
-        },
-        {
-          urls: "turn:openrelay.metered.ca:443",
-          username: "openrelayproject",
-          credential: "openrelayproject"
-        },
-        {
-          urls: "turn:openrelay.metered.ca:443?transport=tcp",
-          username: "openrelayproject",
-          credential: "openrelayproject"
-        }
+        { urls: "stun:global.stun.twilio.com:3478" }
       ],
       iceCandidatePoolSize: 10,
       bundlePolicy: "max-bundle"
@@ -760,10 +743,17 @@ export const VideoCall: React.FC<VideoCallProps> = ({
         }
       });
       
+      // Mute tracks initially to respect default state
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) videoTrack.enabled = false;
+      
+      const audioTrack = stream.getAudioTracks()[0];
+      if (audioTrack) audioTrack.enabled = false;
+
       localStreamRef.current = stream;
       setLocalStream(stream);
-      setIsCamOn(true); // UI state ON by default
-      setIsMicOn(true); // UI state ON by default
+      setIsCamOn(false); // UI state OFF by default
+      setIsMicOn(false); // UI state OFF by default
       setIsInitializing(false);
       return stream;
     } catch (err: any) {
@@ -850,6 +840,9 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     setPartnerEndedCall(null);
     if (!activeCaller) return;
 
+    // Join the call first so our local stream and isJoinedRef are ready BEFORE we notify the caller
+    await handleJoinCall();
+
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({
         type: "webrtc_signal",
@@ -861,8 +854,6 @@ export const VideoCall: React.FC<VideoCallProps> = ({
         }
       }));
     }
-
-    await handleJoinCall();
   };
 
   // Click join call action (acquires stream and starts connection protocol)
@@ -1028,7 +1019,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
               See each other while watching!
             </h4>
             <p className="text-zinc-600 font-sans text-xs max-w-sm mt-1.5 leading-relaxed font-medium">
-              Start a private, secure peer-to-peer video connection with your partner. Your camera and microphone will be enabled when you join.
+              Start a private, secure peer-to-peer video connection with your partner. Keep camera and mic muted by default for safe watching.
             </p>
 
             <button
