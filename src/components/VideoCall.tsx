@@ -177,6 +177,8 @@ export const VideoCall: React.FC<VideoCallProps> = ({
   const pendingCandidates = useRef<Record<string, RTCIceCandidateInit[]>>({});
   // Track ICE restart attempts per peer to prevent infinite loops
   const iceRestartAttempts = useRef<Record<string, number>>({});
+  // Track if we already initiated negotiation to prevent double-offer glare
+  const hasInitiated = useRef<Record<string, boolean>>({});
   
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -205,6 +207,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 
     delete pendingCandidates.current[peerId];
     delete iceRestartAttempts.current[peerId];
+    delete hasInitiated.current[peerId];
 
     setRemoteStreams((prev) => {
       const copy = { ...prev };
@@ -241,6 +244,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     });
     peerConnections.current = {};
     pendingCandidates.current = {};
+    hasInitiated.current = {};
     setRemoteStreams({});
   };
 
@@ -430,6 +434,11 @@ export const VideoCall: React.FC<VideoCallProps> = ({
         // Google STUN — works for direct/same-network connections
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" },
+        // Additional reliable public STUN
+        { urls: "stun:global.stun.twilio.com:3478" },
         // Open Relay TURN servers — required for different-network (mobile vs WiFi) connections
         // These relay media when direct P2P is blocked by NAT/firewall
         {
@@ -444,11 +453,6 @@ export const VideoCall: React.FC<VideoCallProps> = ({
         },
         {
           urls: "turn:openrelay.metered.ca:443?transport=tcp",
-          username: "openrelayproject",
-          credential: "openrelayproject"
-        },
-        {
-          urls: "turns:openrelay.metered.ca:443",
           username: "openrelayproject",
           credential: "openrelayproject"
         }
@@ -608,6 +612,11 @@ export const VideoCall: React.FC<VideoCallProps> = ({
   // SDP Negotiation - Offer creation
   const initiateCall = async (peerId: string, peerName: string) => {
     if (!peerId || !myId || peerId === myId) return;
+    if (hasInitiated.current[peerId]) {
+      console.log(`[WebRTC] Call already initiated with ${peerName}, skipping duplicate offer.`);
+      return;
+    }
+    hasInitiated.current[peerId] = true;
     try {
       const pc = createPeerConnection(peerId, peerName, true);
       const offer = await pc.createOffer({
@@ -1165,7 +1174,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
                     const isFailed = status === "failed";
                     return (
                       <p className="text-[7px] sm:text-[8px] font-mono uppercase mt-0.5 font-bold" style={{ color: isFailed ? '#FF2E63' : isRelaying ? '#00FF66' : '#a1a1aa' }}>
-                        {isFailed ? 'ICE FAILED — RETRYING' : status ? status.toUpperCase() : 'Establishing Tunnel'}
+                        {isFailed ? 'ICE FAILED — RETRYING' : status ? String(status).toUpperCase() : 'Establishing Tunnel'}
                       </p>
                     );
                   })()}
