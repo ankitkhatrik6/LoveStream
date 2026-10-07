@@ -32,7 +32,7 @@ Beyond video sync, I added real-time chat with emoji reactions, typing indicator
 
 - **Flying Emoji Reactions:** The quick reaction bar at the bottom sends emojis that fly up across the screen. Something small I added to make the experience feel more alive.
 
-- **P2P Video Calls:** I integrated WebRTC directly so both people can video call without any third-party server touching their video feed. The WebSocket connection I already had doubles as the signaling channel, so no extra infrastructure needed.
+- **P2P Video Calls:** I integrated WebRTC directly so both people can video call without any third-party server touching their video feed. The WebSocket connection I already had doubles as the signaling channel, so no extra infrastructure needed. For cross-network calls the client runs an ICE watchdog with automatic restarts, shows a clear failure state with a one-tap retry, and supports an optional TURN relay (see below) for strict-NAT networks.
 
 - **Auto-Reconnect:** Sockets drop sometimes. I wrote reconnection logic on both the client and server so if someone briefly loses connection, the session recovers without them having to rejoin manually. Additionally, refreshing or reloading the page preserves the room state and automatically reconnects the user to the active room without sending them back to the homepage.
 
@@ -49,7 +49,7 @@ Beyond video sync, I added real-time chat with emoji reactions, typing indicator
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS v4 |
 | Backend | Node.js, Express, `ws` (WebSockets) |
 | Video | YouTube IFrame Player API |
-| Video Calls | WebRTC (`RTCPeerConnection` + Google STUN) |
+| Video Calls | WebRTC (`RTCPeerConnection` + STUN + optional TURN relay) |
 | Deployment | Render (`render.yaml`) |
 
 ---
@@ -75,6 +75,25 @@ npm run dev
 ```
 
 This starts both the signaling server and the Vite frontend together. Open `http://localhost:3000` in your browser.
+
+### Cross-Network Video Calls (TURN)
+
+Video calls work out of the box on the same network and on most home networks using the bundled STUN servers. If the two of you are on **different networks behind strict NATs** (mobile hotspot, CGNAT ISPs, corporate networks), WebRTC needs a **TURN relay** to carry the media — otherwise ICE cannot build a path and the call would previously hang on "CONNECTING..." forever ([issue #3](https://github.com/ankitkhatrik6/LoveStream/issues/3)).
+
+LoveStream reads TURN settings from environment variables (template in `.env.example`):
+
+```bash
+VITE_TURN_URLS=turn:your-turn-host:3478,turns:your-turn-host:443?transport=tcp
+VITE_TURN_USERNAME=your-turn-username
+VITE_TURN_CREDENTIAL=your-turn-credential
+```
+
+Where to get a TURN relay:
+
+- [Open Relay by Metered](https://www.metered.ca/tools/openrelay/) — free tier with 20 GB/month of TURN usage (sign up for an API key)
+- Self-hosted [coturn](https://github.com/coturn/coturn) — full control, runs on any VPS
+
+Even without TURN the call no longer hangs: a 12-second ICE watchdog retries automatically (up to 3 ICE restarts, from either peer), and if it still can't connect the call screen shows **CONNECTION FAILED** with a **RETRY CONNECTION** button so nothing is left silently stuck.
 
 ### Production Build
 
