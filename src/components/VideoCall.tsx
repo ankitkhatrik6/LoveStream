@@ -183,6 +183,24 @@ export const VideoCall: React.FC<VideoCallProps> = ({
   
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
 
+  // Always send signaling through the CURRENT WebSocket. Peer connections and
+  // their event handlers are created once and can outlive a socket reconnect —
+  // capturing the `socket` prop directly used to push ICE candidates into a
+  // dead socket after a reconnect, which stalled cross-network calls (#3).
+  const socketRef = useRef<WebSocket | null>(socket);
+  useEffect(() => {
+    socketRef.current = socket;
+  }, [socket]);
+
+  const sendMessage = (message: Record<string, unknown>): boolean => {
+    const activeSocket = socketRef.current;
+    if (activeSocket && activeSocket.readyState === WebSocket.OPEN) {
+      activeSocket.send(JSON.stringify(message));
+      return true;
+    }
+    return false;
+  };
+
   // Get active participants' usernames
   const getUsernameById = (id: string): string => {
     const found = users.find(u => u.id === id);
@@ -268,12 +286,10 @@ export const VideoCall: React.FC<VideoCallProps> = ({
           console.log(`[WebRTC Msg] Re-initiating call with reconnected partner at ${newSocketId}`);
           handlePeerDisconnect(newSocketId);
 
-          if (socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({
-              type: "peer_present_response",
-              payload: { targetId: newSocketId }
-            }));
-          }
+          sendMessage({
+            type: "peer_present_response",
+            payload: { targetId: newSocketId }
+          });
 
           if (myId < newSocketId) {
             initiateCall(newSocketId, user.username);
@@ -324,12 +340,10 @@ export const VideoCall: React.FC<VideoCallProps> = ({
           // This fixes the timing race where accepter's peer_joined_video_call
           // may arrive before we set isJoinedRef.current = true
           handleJoinCall().then(() => {
-            if (socket && socket.readyState === WebSocket.OPEN) {
-              socket.send(JSON.stringify({
-                type: "peer_present_response",
-                payload: { targetId: senderId }
-              }));
-            }
+            sendMessage({
+              type: "peer_present_response",
+              payload: { targetId: senderId }
+            });
           });
           return;
         }
@@ -342,12 +356,10 @@ export const VideoCall: React.FC<VideoCallProps> = ({
         case "peer_joined_video_call": {
           console.log(`[WebRTC Msg] Peer joined call: ${senderName} (${senderId})`);
           // We respond to let them know we are also in the call
-          if (socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({
-              type: "peer_present_response",
-              payload: { targetId: senderId }
-            }));
-          }
+          sendMessage({
+            type: "peer_present_response",
+            payload: { targetId: senderId }
+          });
 
           // Check if we are the initiator (alphabetical connection ordering)
           // If our ID is "smaller", we start the offer negotiation
@@ -406,7 +418,9 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     return () => {
       unsubscribe();
     };
-  }, [onMessageSubscribe, myId, callState, socket, users]);
+    // `socket` intentionally omitted: sends go through socketRef, so the
+    // handler does not need to resubscribe on every socket swap.
+  }, [onMessageSubscribe, myId, callState, users]);
 
   // Handle local video element layout mapping
   useEffect(() => {
@@ -437,8 +451,8 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 
     // Handle ICE Candidates
     pc.onicecandidate = (event) => {
-      if (event.candidate && socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({
+      if (event.candidate) {
+        sendMessage({
           type: "webrtc_signal",
           payload: {
             targetId: peerId,
@@ -452,8 +466,8 @@ export const VideoCall: React.FC<VideoCallProps> = ({
               }
             }
           }
-        }));
-      } else if (!event.candidate) {
+        });
+      } else {
         console.log(`[WebRTC] ICE gathering complete for peer ${peerName}`);
       }
     };
@@ -565,15 +579,13 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       }
       const offer = await pc.createOffer({ iceRestart: true });
       await pc.setLocalDescription(offer);
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({
-          type: "webrtc_signal",
-          payload: {
-            targetId: peerId,
-            signal: { type: "offer", sdp: offer.sdp }
-          }
-        }));
-      }
+      sendMessage({
+        type: "webrtc_signal",
+        payload: {
+          targetId: peerId,
+          signal: { type: "offer", sdp: offer.sdp }
+        }
+      });
       console.log(`[WebRTC] ICE restart offer sent to ${peerName}`);
     } catch (err) {
       console.error(`[WebRTC] ICE restart failed for ${peerName}:`, err);
@@ -597,18 +609,16 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       });
       await pc.setLocalDescription(offer);
 
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({
-          type: "webrtc_signal",
-          payload: {
-            targetId: peerId,
-            signal: {
-              type: "offer",
-              sdp: offer.sdp
-            }
+      sendMessage({
+        type: "webrtc_signal",
+        payload: {
+          targetId: peerId,
+          signal: {
+            type: "offer",
+            sdp: offer.sdp
           }
-        }));
-      }
+        }
+      });
     } catch (err: any) {
       console.error(`[WebRTC] Failed to create or send offer to ${peerName}:`, err);
     }
@@ -637,18 +647,16 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       // Process any pending candidates for this peer
       await processPendingCandidates(peerId);
 
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({
-          type: "webrtc_signal",
-          payload: {
-            targetId: peerId,
-            signal: {
-              type: "answer",
-              sdp: answer.sdp
-            }
+      sendMessage({
+        type: "webrtc_signal",
+        payload: {
+          targetId: peerId,
+          signal: {
+            type: "answer",
+            sdp: answer.sdp
           }
-        }));
-      }
+        }
+      });
     } catch (err: any) {
       console.error(`[WebRTC] Failed to handle offer and create answer:`, err);
     }
@@ -773,28 +781,28 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       return;
     }
 
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      console.log(`[WebRTC Call] Sending invite to partner: ${partner.username} (${partner.id})`);
-      socket.send(JSON.stringify({
-        type: "webrtc_signal",
-        payload: {
-          targetId: partner.id,
-          signal: {
-            type: "call_invite"
-          }
+    console.log(`[WebRTC Call] Sending invite to partner: ${partner.username} (${partner.id})`);
+    const sent = sendMessage({
+      type: "webrtc_signal",
+      payload: {
+        targetId: partner.id,
+        signal: {
+          type: "call_invite"
         }
-      }));
-      setCallState("ringing");
-    } else {
+      }
+    });
+    if (!sent) {
       setError("Connection lost. Please try rejoining the room.");
+      return;
     }
+    setCallState("ringing");
   };
 
   // Cancel the sent invite
   const handleCancelCall = () => {
     const partner = getPartnerUser();
-    if (partner && socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({
+    if (partner) {
+      sendMessage({
         type: "webrtc_signal",
         payload: {
           targetId: partner.id,
@@ -802,15 +810,15 @@ export const VideoCall: React.FC<VideoCallProps> = ({
             type: "call_cancel"
           }
         }
-      }));
+      });
     }
     setCallState("idle");
   };
 
   // Decline incoming invite
   const handleDeclineCall = () => {
-    if (activeCaller && socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({
+    if (activeCaller) {
+      sendMessage({
         type: "webrtc_signal",
         payload: {
           targetId: activeCaller.id,
@@ -818,7 +826,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
             type: "call_decline"
           }
         }
-      }));
+      });
     }
     setCallState("idle");
     setActiveCaller(null);
@@ -832,17 +840,15 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     // Join the call first so our local stream and isJoinedRef are ready BEFORE we notify the caller
     await handleJoinCall();
 
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({
-        type: "webrtc_signal",
-        payload: {
-          targetId: activeCaller.id,
-          signal: {
-            type: "call_accept"
-          }
+    sendMessage({
+      type: "webrtc_signal",
+      payload: {
+        targetId: activeCaller.id,
+        signal: {
+          type: "call_accept"
         }
-      }));
-    }
+      }
+    });
   };
 
   // Click join call action (acquires stream and starts connection protocol)
@@ -854,12 +860,10 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       setCallState("connected");
 
       // Signal to room that we are online in the video call
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({
-          type: "join_video_call",
-          payload: {}
-        }));
-      }
+      sendMessage({
+        type: "join_video_call",
+        payload: {}
+      });
     } catch (err) {
       // Handled in startLocalMedia
       isJoinedRef.current = false;
@@ -870,12 +874,10 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 
   // Click leave call action
   const handleLeaveCall = () => {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({
-        type: "leave_video_call",
-        payload: {}
-      }));
-    }
+    sendMessage({
+      type: "leave_video_call",
+      payload: {}
+    });
     stopAllMedia();
     isJoinedRef.current = false;
     setIsJoined(false);
@@ -914,12 +916,12 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 
   // If socket reconnects and we are already in a call, re-announce our presence
   useEffect(() => {
-    if (isJoined && socket && socket.readyState === WebSocket.OPEN) {
+    if (isJoined && socket) {
       console.log("[WebRTC] Socket reconnected while in call, re-sending join_video_call");
-      socket.send(JSON.stringify({
+      sendMessage({
         type: "join_video_call",
         payload: {}
-      }));
+      });
     }
   }, [socket, isJoined]);
 

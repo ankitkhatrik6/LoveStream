@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Heart,
   Share2,
@@ -281,6 +281,16 @@ export default function App() {
   const [myId, setMyId] = useState("");
   const [incomingCallMessage, setIncomingCallMessage] = useState<{ type: string; payload: any } | null>(null);
   const webrtcListenerRef = useRef<((msg: any) => void) | null>(null);
+
+  // Stable subscription identity: an inline arrow here would change on every
+  // App render and force VideoCall to unsubscribe/resubscribe its WebRTC
+  // message handler continuously. useCallback keeps it stable (#3).
+  const subscribeWebRTCListener = useCallback((callback: (msg: any) => void) => {
+    webrtcListenerRef.current = callback;
+    return () => {
+      webrtcListenerRef.current = null;
+    };
+  }, []);
 
   // UI States
   const [copied, setCopied] = useState(false);
@@ -1739,12 +1749,7 @@ export default function App() {
                   roomId={roomId}
                   myId={myId}
                   users={users}
-                  onMessageSubscribe={(callback) => {
-                    webrtcListenerRef.current = callback;
-                    return () => {
-                      webrtcListenerRef.current = null;
-                    };
-                  }}
+                  onMessageSubscribe={subscribeWebRTCListener}
                 />
               </div>
 
