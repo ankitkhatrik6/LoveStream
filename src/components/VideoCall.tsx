@@ -14,6 +14,7 @@ import {
   Check,
   X
 } from "lucide-react";
+import { RTC_CONFIGURATION } from "../lib/iceServers";
 
 class CallSoundManager {
   private audioCtx: AudioContext | null = null;
@@ -417,7 +418,8 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     }
   }, [localStream]);
 
-  // Create peer connection with STUN + TURN relay servers for cross-network support
+  // Create peer connection using the central ICE configuration
+  // (STUN + optional TURN relay — see src/lib/iceServers.ts and .env.example)
   const createPeerConnection = (peerId: string, peerName: string, isInitiator: boolean) => {
     // Double safeguard to never connect to ourselves
     if (!peerId || !myId || peerId === myId) {
@@ -429,20 +431,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     }
 
     console.log(`[WebRTC] Creating RTCPeerConnection for peer ${peerId}, isInitiator: ${isInitiator}`);
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        // Google STUN — works for direct/same-network connections
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-        { urls: "stun:stun2.l.google.com:19302" },
-        { urls: "stun:stun3.l.google.com:19302" },
-        { urls: "stun:stun4.l.google.com:19302" },
-        // Additional reliable public STUN
-        { urls: "stun:global.stun.twilio.com:3478" }
-      ],
-      iceCandidatePoolSize: 10,
-      bundlePolicy: "max-bundle"
-    });
+    const pc = new RTCPeerConnection(RTC_CONFIGURATION);
 
     iceRestartAttempts.current[peerId] = 0;
 
