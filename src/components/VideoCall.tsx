@@ -1066,6 +1066,60 @@ export const VideoCall: React.FC<VideoCallProps> = ({
 
   const partner = getPartnerUser();
 
+  // The peer whose ICE recovery gave up — drives the failure banner + retry (#3)
+  const failedPeerId =
+    Object.keys(peerStatus).find((id) => id !== myId && peerStatus[id] === "failed") || null;
+
+  // Manual retry after a permanently failed connection (#3). Resets the
+  // recovery budget and either salvages the existing peer connection with an
+  // ICE restart or rebuilds the negotiation from scratch.
+  const handleRetryConnection = () => {
+    if (!failedPeerId || !partner) return;
+    const peerId = failedPeerId;
+    const peerName = partner.username;
+    console.log(`[WebRTC] Retrying connection with ${peerName} (${peerId})`);
+
+    iceRestartAttempts.current[peerId] = 0;
+    recoveryLocks.current[peerId] = false;
+
+    const pc = peerConnections.current[peerId];
+    const canSalvage = !!pc && pc.signalingState === "stable";
+
+    if (!canSalvage) {
+      // No usable peer connection — rebuild from scratch
+      handlePeerDisconnect(peerId);
+    }
+
+    setPeerStatus((prev) => ({ ...prev, [peerId]: "checking" }));
+
+    if (canSalvage) {
+      armIceWatchdog(peerId, peerName);
+      if (hasInitiated.current[peerId]) {
+        restartIce(peerId, peerName);
+      } else {
+        // We are the answerer — ask the offerer to drive the restart
+        sendMessage({
+          type: "webrtc_signal",
+          payload: {
+            targetId: peerId,
+            signal: { type: "ice_restart_request" }
+          }
+        });
+      }
+      return;
+    }
+
+    if (myId < peerId) {
+      initiateCall(peerId, peerName);
+    } else {
+      // We are the answerer — poke the initiator so it re-offers
+      sendMessage({
+        type: "peer_present_response",
+        payload: { targetId: peerId }
+      });
+    }
+  };
+
   return (
     <div className="w-full border-4 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] flex flex-col overflow-hidden animate-fade-in">
       {/* Neobrutalist Call Header */}
@@ -1246,11 +1300,33 @@ export const VideoCall: React.FC<VideoCallProps> = ({
         {/* 4. ACTIVE VIDEO CALL SCREEN */}
         {isJoined && (
           <div className="flex flex-col gap-3 w-full">
+            {/* Connection failure banner with manual retry (#3) */}
+            {failedPeerId && (
+              <div className="border-4 border-black bg-[#FFEFEF] p-3 font-mono text-xs flex items-start gap-2.5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                <AlertCircle className="w-5 h-5 text-[#FF2E63] shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-bold uppercase text-[#FF2E63]">CONNECTION FAILED</p>
+                  <p className="mt-1 text-black/80 font-medium">
+                    Couldn't reach your partner through the network. This usually means one side is
+                    behind a strict NAT — for hard-to-reach networks configure a TURN relay (see
+                    .env.example), or retry now.
+                  </p>
+                  <button
+                    onClick={handleRetryConnection}
+                    className="mt-2 border-2 border-black bg-[#00FF66] hover:bg-black hover:text-[#00FF66] font-display font-black text-[10px] uppercase px-4 py-2 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:shadow-none cursor-pointer transition-all flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    RETRY CONNECTION
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Grid of stream views — 2 cols on all screens, square on mobile */}
             <div className="grid grid-cols-2 gap-1.5 sm:gap-3 w-full">
               
               {/* Local Feed preview */}
-              <div className="relative border-4 border-black bg-black aspect-square overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+              <div className="relative border-4 border-black bg-black aspect-video overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
                 <video
                   ref={localVideoRef}
                   autoPlay
@@ -1271,22 +1347,31 @@ export const VideoCall: React.FC<VideoCallProps> = ({
               {/* Remote Feed preview(s) */}
               {Object.keys(remoteStreams).filter(id => id !== myId).length === 0 ? (
                 /* No partner stream connected yet — show detailed status */
-                <div className="border-4 border-black bg-zinc-200 aspect-square flex flex-col items-center justify-center p-2 text-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] relative select-none">
+                <div className="border-4 border-black bg-zinc-200 aspect-video flex flex-col items-center justify-center p-2 text-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] relative select-none">
                   <div className="animate-bounce mb-1">
                     <User className="w-5 h-5 sm:w-6 sm:h-6 text-zinc-400 border-2 border-black p-1 bg-white rounded-none" />
                   </div>
-                  <h5 className="font-display font-black text-[9px] sm:text-[10px] text-black uppercase tracking-tight">
-                    CONNECTING...
-                  </h5>
                   {(() => {
                     const statuses = Object.values(peerStatus);
                     const status = statuses[0];
                     const isRelaying = status === "connected" || status === "completed";
                     const isFailed = status === "failed";
                     return (
-                      <p className="text-[7px] sm:text-[8px] font-mono uppercase mt-0.5 font-bold" style={{ color: isFailed ? '#FF2E63' : isRelaying ? '#00FF66' : '#a1a1aa' }}>
-                        {isFailed ? 'ICE FAILED — RETRYING' : status ? String(status).toUpperCase() : 'Establishing Tunnel'}
-                      </p>
+                      <>
+                        <h5
+                          className="font-display font-black text-[9px] sm:text-[10px] uppercase tracking-tight"
+                          style={{ color: isFailed ? "#FF2E63" : "#000000" }}
+                        >
+                          {isFailed ? "CONNECTION FAILED" : "CONNECTING..."}
+                        </h5>
+                        <p className="text-[7px] sm:text-[8px] font-mono uppercase mt-0.5 font-bold" style={{ color: isFailed ? '#FF2E63' : isRelaying ? '#00FF66' : '#a1a1aa' }}>
+                          {isFailed
+                            ? 'Retry or configure TURN relay'
+                            : status
+                              ? String(status).toUpperCase()
+                              : 'Establishing Tunnel'}
+                        </p>
+                      </>
                     );
                   })()}
                 </div>
@@ -1376,9 +1461,10 @@ const RemoteVideoFeed: React.FC<RemoteVideoFeedProps> = ({ stream, connStatus })
   }, [stream]);
 
   const isRelaying = connStatus === "connected" || connStatus === "completed";
+  const isFailed = connStatus === "failed";
 
   return (
-    <div className="relative border-4 border-black bg-black aspect-square overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-scale-up">
+    <div className="relative border-4 border-black bg-black aspect-video overflow-hidden shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-scale-up">
       <video
         ref={remoteVideoRef}
         autoPlay
@@ -1390,11 +1476,11 @@ const RemoteVideoFeed: React.FC<RemoteVideoFeedProps> = ({ stream, connStatus })
         <div
           className="absolute top-1 right-1 font-mono font-black text-[7px] uppercase px-1.5 py-0.5 border border-black"
           style={{
-            background: isRelaying ? '#00FF66' : '#facc15',
-            color: '#000'
+            background: isRelaying ? '#00FF66' : isFailed ? '#FF2E63' : '#facc15',
+            color: isFailed ? '#fff' : '#000'
           }}
         >
-          {isRelaying ? 'LIVE' : connStatus.toUpperCase()}
+          {isRelaying ? 'LIVE' : isFailed ? 'FAILED' : connStatus.toUpperCase()}
         </div>
       )}
     </div>
