@@ -16,6 +16,12 @@ import {
 } from "lucide-react";
 import { RTC_CONFIGURATION } from "../lib/iceServers";
 
+// ICE connection watchdog: how long each peer waits for ICE to reach
+// "connected" before kicking off recovery, and how many automatic ICE
+// restarts we allow before surfacing a failure to the user (#3).
+const ICE_CONNECT_TIMEOUT_MS = 12000;
+const MAX_ICE_RESTARTS = 3;
+
 class CallSoundManager {
   private audioCtx: AudioContext | null = null;
   private intervalId: any = null;
@@ -180,6 +186,11 @@ export const VideoCall: React.FC<VideoCallProps> = ({
   const iceRestartAttempts = useRef<Record<string, number>>({});
   // Track if we already initiated negotiation to prevent double-offer glare
   const hasInitiated = useRef<Record<string, boolean>>({});
+  // Per-peer watchdog timers that detect ICE never reaching "connected" (#3)
+  const iceWatchdogs = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // Per-peer lock so onconnectionstatechange + oniceconnectionstatechange +
+  // the watchdog can't all fire overlapping recovery attempts at once (#3)
+  const recoveryLocks = useRef<Record<string, boolean>>({});
   
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -227,6 +238,8 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     delete pendingCandidates.current[peerId];
     delete iceRestartAttempts.current[peerId];
     delete hasInitiated.current[peerId];
+    clearIceWatchdog(peerId);
+    delete recoveryLocks.current[peerId];
 
     setRemoteStreams((prev) => {
       const copy = { ...prev };
@@ -264,6 +277,8 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     peerConnections.current = {};
     pendingCandidates.current = {};
     hasInitiated.current = {};
+    Object.keys(iceWatchdogs.current).forEach((peerId) => clearIceWatchdog(peerId));
+    recoveryLocks.current = {};
     setRemoteStreams({});
   };
 
@@ -364,7 +379,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
           // Check if we are the initiator (alphabetical connection ordering)
           // If our ID is "smaller", we start the offer negotiation
           if (myId < senderId) {
-            initiateCall(senderId, senderName);
+            maybeInitiateCall(senderId, senderName);
           }
           break;
         }
@@ -373,7 +388,7 @@ export const VideoCall: React.FC<VideoCallProps> = ({
           console.log(`[WebRTC Msg] Received peer_present from ${senderName} (${senderId})`);
           // Existing peer is in call. If we are the initiator, create the offer
           if (myId < senderId) {
-            initiateCall(senderId, senderName);
+            maybeInitiateCall(senderId, senderName);
           }
           break;
         }
@@ -390,6 +405,9 @@ export const VideoCall: React.FC<VideoCallProps> = ({
           } else if (signal.type === "candidate") {
             console.log(`[WebRTC Msg] Received ICE candidate from ${senderName}`);
             handleCandidate(senderId, signal.candidate);
+          } else if (signal.type === "ice_restart_request") {
+            console.log(`[WebRTC Msg] ${senderName} requested an ICE restart`);
+            handleIceRestartRequest(senderId, senderName);
           }
           break;
         }
@@ -432,6 +450,121 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     }
   }, [localStream]);
 
+  // -------------------------------------------------------------------------
+  // ICE watchdog + symmetric recovery (#3)
+  //
+  // Previously only the offerer reacted to ICE failures (and the answerer
+  // immediately tore the connection down); if ICE never left "checking"
+  // (symmetric NAT / CGNAT without a TURN relay) nothing happened at all and
+  // the UI hung on CONNECTING forever. Now both peers run a watchdog, recovery
+  // is deduplicated, the answerer can ask the offerer for an ICE restart, and
+  // after MAX_ICE_RESTARTS the peer is marked "failed" so the UI can offer a
+  // Retry button instead of hanging.
+  // -------------------------------------------------------------------------
+
+  const clearIceWatchdog = (peerId: string) => {
+    const timer = iceWatchdogs.current[peerId];
+    if (timer) {
+      clearTimeout(timer);
+      delete iceWatchdogs.current[peerId];
+    }
+  };
+
+  const updatePeerStatus = (peerId: string, state: string) => {
+    setPeerStatus((prev) => {
+      // Keep an explicit "failed" sticky until a healthy state (or an explicit
+      // retry reset) overwrites it, so transient ICE events can't hide the
+      // failure from the user.
+      const isSignificant = state === "connected" || state === "completed" || state === "failed";
+      if (prev[peerId] === "failed" && !isSignificant) return prev;
+      return { ...prev, [peerId]: state };
+    });
+  };
+
+  const armIceWatchdog = (peerId: string, peerName: string) => {
+    clearIceWatchdog(peerId);
+    iceWatchdogs.current[peerId] = setTimeout(() => {
+      delete iceWatchdogs.current[peerId];
+      const pc = peerConnections.current[peerId];
+      if (!pc || !isJoinedRef.current) return;
+      if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") return;
+      console.warn(`[WebRTC] ICE watchdog fired for ${peerName} (state: ${pc.iceConnectionState})`);
+      attemptIceRecovery(peerId, peerName);
+    }, ICE_CONNECT_TIMEOUT_MS);
+  };
+
+  const attemptIceRecovery = (peerId: string, peerName: string) => {
+    if (!isJoinedRef.current || !peerConnections.current[peerId]) return;
+    if (recoveryLocks.current[peerId]) return;
+
+    const attempts = iceRestartAttempts.current[peerId] || 0;
+    if (attempts >= MAX_ICE_RESTARTS) {
+      console.warn(`[WebRTC] Giving up on ${peerName} after ${attempts} ICE restart attempts.`);
+      clearIceWatchdog(peerId);
+      updatePeerStatus(peerId, "failed");
+      return;
+    }
+
+    recoveryLocks.current[peerId] = true;
+    iceRestartAttempts.current[peerId] = attempts + 1;
+    // Watch the post-restart attempt as well
+    armIceWatchdog(peerId, peerName);
+
+    if (hasInitiated.current[peerId]) {
+      console.log(`[WebRTC] ICE recovery #${attempts + 1}: restart offer for ${peerName}`);
+      restartIce(peerId, peerName);
+    } else {
+      // We are the answerer — ask the offerer (who owns negotiation) to
+      // drive the restart, avoiding offer glare (#3)
+      console.log(`[WebRTC] ICE recovery #${attempts + 1}: requesting restart from ${peerName}`);
+      sendMessage({
+        type: "webrtc_signal",
+        payload: {
+          targetId: peerId,
+          signal: { type: "ice_restart_request" }
+        }
+      });
+    }
+
+    setTimeout(() => {
+      recoveryLocks.current[peerId] = false;
+    }, 2500);
+  };
+
+  // The answerer cannot unilaterally send a restart offer without risking
+  // glare, so it asks the offerer via ice_restart_request (#3).
+  const handleIceRestartRequest = (peerId: string, peerName: string) => {
+    const pc = peerConnections.current[peerId];
+    if (!pc || !hasInitiated.current[peerId]) return; // only the offerer restarts
+    if (recoveryLocks.current[peerId]) return; // already recovering on our side
+    const state = pc.iceConnectionState;
+    if (state === "connected" || state === "completed") return; // already healthy
+    if (pc.signalingState !== "stable") return; // negotiation already in flight
+    console.log(`[WebRTC] Honoring ICE restart request from ${peerName}`);
+    iceRestartAttempts.current[peerId] = (iceRestartAttempts.current[peerId] || 0) + 1;
+    armIceWatchdog(peerId, peerName);
+    restartIce(peerId, peerName);
+  };
+
+  // Only start (or restart) an offer when no healthy negotiation is in flight.
+  // Keeps the original "smaller id initiates" election but also allows a
+  // re-offer after a failed connection so RETRY works on both sides (#3).
+  const canReNegotiate = (peerId: string): boolean => {
+    const pc = peerConnections.current[peerId];
+    if (!pc || pc.signalingState === "closed") return true;
+    if (pc.signalingState !== "stable") return false; // negotiation in flight
+    return pc.iceConnectionState === "failed" || pc.connectionState === "failed";
+  };
+
+  const maybeInitiateCall = (peerId: string, peerName: string) => {
+    if (!canReNegotiate(peerId)) {
+      console.log(`[WebRTC] Negotiation with ${peerName} already in progress, not re-initiating.`);
+      return;
+    }
+    hasInitiated.current[peerId] = false;
+    initiateCall(peerId, peerName);
+  };
+
   // Create peer connection using the central ICE configuration
   // (STUN + optional TURN relay — see src/lib/iceServers.ts and .env.example)
   const createPeerConnection = (peerId: string, peerName: string, isInitiator: boolean) => {
@@ -472,35 +605,24 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       }
     };
 
-    // Connection changes
+    // Connection changes → single recovery path (attemptIceRecovery)
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
       console.log(`[WebRTC] Connection state for ${peerName}: ${state}`);
-      setPeerStatus(prev => ({ ...prev, [peerId]: state }));
-      if (state === "failed") {
-        // Try ICE restart before giving up
-        const attempts = iceRestartAttempts.current[peerId] || 0;
-        if (attempts < 2 && isInitiator) {
-          iceRestartAttempts.current[peerId] = attempts + 1;
-          console.log(`[WebRTC] Connection failed, attempting ICE restart #${attempts + 1} for ${peerName}`);
-          restartIce(peerId, peerName);
-        } else {
-          console.log(`[WebRTC] Connection permanently failed for ${peerName}, disconnecting.`);
-          handlePeerDisconnect(peerId);
-        }
+      updatePeerStatus(peerId, state);
+      if (state === "connected") {
+        clearIceWatchdog(peerId);
+      } else if (state === "failed") {
+        attemptIceRecovery(peerId, peerName);
       } else if (state === "disconnected") {
         // Disconnected is recoverable — wait briefly before acting
         console.log(`[WebRTC] Connection temporarily disconnected for ${peerName}, waiting...`);
         setTimeout(() => {
-          if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-            const attempts = iceRestartAttempts.current[peerId] || 0;
-            if (attempts < 2 && isInitiator) {
-              iceRestartAttempts.current[peerId] = attempts + 1;
-              console.log(`[WebRTC] Still disconnected after wait, ICE restart #${attempts + 1} for ${peerName}`);
-              restartIce(peerId, peerName);
-            } else {
-              handlePeerDisconnect(peerId);
-            }
+          if (
+            isJoinedRef.current &&
+            (pc.connectionState === "disconnected" || pc.connectionState === "failed")
+          ) {
+            attemptIceRecovery(peerId, peerName);
           }
         }, 4000);
       }
@@ -509,16 +631,11 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState;
       console.log(`[WebRTC] ICE Connection state for ${peerName}: ${state}`);
-      setPeerStatus(prev => ({ ...prev, [peerId]: state }));
-      if (state === "failed") {
-        const attempts = iceRestartAttempts.current[peerId] || 0;
-        if (attempts < 2 && isInitiator) {
-          iceRestartAttempts.current[peerId] = attempts + 1;
-          console.log(`[WebRTC] ICE failed, restarting #${attempts + 1} for ${peerName}`);
-          restartIce(peerId, peerName);
-        } else {
-          handlePeerDisconnect(peerId);
-        }
+      updatePeerStatus(peerId, state);
+      if (state === "connected" || state === "completed") {
+        clearIceWatchdog(peerId);
+      } else if (state === "failed") {
+        attemptIceRecovery(peerId, peerName);
       }
     };
 
@@ -565,16 +682,30 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     }
 
     peerConnections.current[peerId] = pc;
+
+    // Watchdog: if ICE never reaches "connected" (e.g. symmetric NAT without
+    // a TURN relay configured), start recovery instead of hanging forever (#3)
+    armIceWatchdog(peerId, peerName);
+
     return pc;
   };
 
   // ICE Restart — re-negotiate the connection without full teardown
-  const restartIce = async (peerId: string, peerName: string) => {
+  const restartIce = async (peerId: string, peerName: string, isRetry = false) => {
     try {
       const pc = peerConnections.current[peerId];
       if (!pc) return;
       if (pc.signalingState !== "stable") {
-        console.warn(`[WebRTC] Cannot ICE restart, signaling state is ${pc.signalingState}`);
+        if (isRetry) {
+          console.warn(`[WebRTC] Still unable to ICE restart ${peerName}, signaling state is ${pc.signalingState}`);
+          return;
+        }
+        console.warn(`[WebRTC] Cannot ICE restart yet, signaling state is ${pc.signalingState} — retrying shortly`);
+        setTimeout(() => {
+          if (isJoinedRef.current && peerConnections.current[peerId]) {
+            restartIce(peerId, peerName, true);
+          }
+        }, 1500);
         return;
       }
       const offer = await pc.createOffer({ iceRestart: true });
@@ -588,8 +719,11 @@ export const VideoCall: React.FC<VideoCallProps> = ({
       });
       console.log(`[WebRTC] ICE restart offer sent to ${peerName}`);
     } catch (err) {
+      // Don't tear the call down — surface the failure and let the watchdog /
+      // retry flow handle it (#3)
       console.error(`[WebRTC] ICE restart failed for ${peerName}:`, err);
-      handlePeerDisconnect(peerId);
+      updatePeerStatus(peerId, "failed");
+      clearIceWatchdog(peerId);
     }
   };
 
@@ -603,9 +737,14 @@ export const VideoCall: React.FC<VideoCallProps> = ({
     hasInitiated.current[peerId] = true;
     try {
       const pc = createPeerConnection(peerId, peerName, true);
+      // Re-offering after a failed connection must restart ICE, otherwise the
+      // old (dead) candidates are reused and the call never recovers (#3)
+      const needsIceRestart =
+        pc.iceConnectionState === "failed" || pc.connectionState === "failed";
       const offer = await pc.createOffer({
         offerToReceiveAudio: true,
-        offerToReceiveVideo: true
+        offerToReceiveVideo: true,
+        iceRestart: needsIceRestart
       });
       await pc.setLocalDescription(offer);
 
